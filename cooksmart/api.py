@@ -3,6 +3,7 @@ Meta-format WhatsApp webhook so the real channel can be swapped in later."""
 from __future__ import annotations
 
 import datetime as dt
+import json
 import hmac
 from pathlib import Path
 
@@ -12,8 +13,9 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 
-from . import callresult, gnani_kb
+from . import callresult, gnani_kb, gnani_prompt, studio
 from . import inventory as inv
+from . import profile as prof
 from . import repo, scenarios
 from .agent import Agent
 from .channels import MockChannel
@@ -27,7 +29,7 @@ from .providers.grocery import MockGroceryProvider
 from .providers.payment import MockPaymentProvider
 from .providers.calls import GnaniCallProvider, MockCallProvider
 from .providers.gnani import GnaniSpeechProvider
-from .providers.gnani_platform import GnaniPlatform
+from .providers.gnani_platform import GnaniPlatform, PlatformError
 from .providers.speech import MockSpeechProvider, ResilientSpeech
 from .providers.voice import MockVoiceVerifier
 
@@ -46,14 +48,18 @@ def build_speech(settings: Settings, controls: MockControls):
     return ResilientSpeech(gnani, mock, controls)
 
 
-def build_caller(settings: Settings):
+def build_platform(settings: Settings) -> GnaniPlatform | None:
+    return GnaniPlatform(settings.inya_platform_key) if settings.inya_platform_key else None
+
+
+def build_caller(settings: Settings, platform: GnaniPlatform | None = None):
     """The Gnani voice agent that phones the cook, or a mock that records the call."""
-    if settings.inya_platform_key and settings.inya_bot_id:
-        return GnaniCallProvider(GnaniPlatform(settings.inya_platform_key), settings.inya_bot_id, settings.inya_environment)
+    if platform and settings.inya_bot_id:
+        return GnaniCallProvider(platform, settings.inya_bot_id, settings.inya_environment)
     return MockCallProvider()
 
 
-def build_agent(settings: Settings, db: DB, controls: MockControls) -> Agent:
+def build_agent(settings: Settings, db: DB, controls: MockControls, platform: GnaniPlatform | None = None) -> Agent:
     claude_planner = claude_nlu = None
     if settings.anthropic_api_key:
         claude_planner = ClaudePlanner(settings.anthropic_api_key, settings.model)
@@ -61,7 +67,7 @@ def build_agent(settings: Settings, db: DB, controls: MockControls) -> Agent:
     speech = build_speech(settings, controls)
     return Agent(db, MockChannel(db, speech), Planner(claude_planner), NLU(claude_nlu), speech,
                  MockGroceryProvider(controls), MockDispatchProvider(), MockPaymentProvider(controls),
-                 MockVoiceVerifier(), build_caller(settings))
+                 MockVoiceVerifier(), build_caller(settings, platform))
 
 
 class TextBody(BaseModel):
@@ -128,11 +134,35 @@ def next_step(plan: dict | None, orders: list[dict]) -> dict:
                 hint="Answer the agent in the cook chat first (e.g. *paneer khatam*, then *haan*).")
 
 
-def create_app(settings: Settings | None = None, db: DB | None = None) -> FastAPI:
+class PromptBody(BaseModel):
+    content: str
+    force: bool = False
+
+
+class PreviewBody(BaseModel):
+    content: str | None = None
+    call_type: str = "brief"
+
+
+class DocBody(BaseModel):
+    content: str
+    name: str | None = None
+
+
+class FaqBody(BaseModel):
+    faqs: list[dict]
+
+
+class RestoreBody(BaseModel):
+    version_id: int
+
+
+def create_app(settings: Settings | None = None, db: DB | None = None, platform: GnaniPlatform | None = None) -> FastAPI:
     settings = settings or get_settings()
     db = db or DB(settings.db_path)
     controls = MockControls()
-    agent = build_agent(settings, db, controls)
+    platform = platform or build_platform(settings)
+    agent = build_agent(settings, db, controls, platform)
     app = FastAPI(title="CookSmart")
     app.state.agent, app.state.db, app.state.controls = agent, db, controls
     current: dict[str, str] = {}
@@ -277,8 +307,8 @@ def create_app(settings: Settings | None = None, db: DB | None = None) -> FastAP
     def gnani_kb_view(hid: str):
         """The knowledge base this household's Gnani agent would be given (also written by `gnani_cli kb`)."""
         h = need(hid)
-        return {"files": gnani_kb.build_docs(h["preferences"], h["family_size"]),
-                "faqs": gnani_kb.build_faqs(h["preferences"])}
+        return {"files": {d["name"]: d["content"] for d in studio.current_docs(db, hid, h["preferences"], h["family_size"])},
+                "faqs": studio.current_faqs(db, hid, h["preferences"])[0]}
 
     @app.post("/api/{hid}/profile/demo")
     def load_demo_family(hid: str):
@@ -287,6 +317,153 @@ def create_app(settings: Settings | None = None, db: DB | None = None) -> FastAP
         repo.update_household(db, hid, preferences={**h["preferences"], **demo})
         repo.audit(db, hid, "demo_family_loaded")
         return {"ok": True}
+
+    # ---- Agent Studio: edit the cook-call agent's prompt, knowledge base, FAQs and the household profile
+    def studio_state(hid: str) -> dict:
+        h = need(hid)
+        prompt, p_over = studio.current_prompt(db, hid)
+        faqs, faq_default, f_over = studio.current_faqs(db, hid, h["preferences"])
+        prefs = h["preferences"]
+        can_push = platform is not None and bool(settings.inya_bot_id)
+        return {
+            "prompt": {"current": prompt, "default": gnani_prompt.load_prompt(), "overridden": p_over,
+                       "history": studio.history(db, hid, "prompt", studio.PROMPT),
+                       "checks": studio.check_prompt(prompt), "variables": [{"name": n, "about": a} for n, a in studio.VARIABLES]},
+            "docs": [{**d, "history": studio.history(db, hid, "doc", d["name"])}
+                     for d in studio.current_docs(db, hid, prefs, h["family_size"])],
+            "faqs": {"items": faqs, "default": faq_default, "overridden": f_over, "history": studio.history(db, hid, "faqs", "faqs")},
+            "profile": {"family_size": h["family_size"], "diet": prefs.get("diet", "vegetarian"),
+                        "lactose_free": bool(prefs.get("lactose_free")), "cook_name": prefs.get("cook_name", ""),
+                        "cook_phone": h["cook_phone"] or "", "members": prefs.get("members", []), "style": prefs.get("style", {}),
+                        "customs": prefs.get("customs", []), "kitchen": prefs.get("kitchen", {}),
+                        "units": prefs.get("units", {"katori_ml": 150})},
+            "options": {"allergens": {g: m["hi"] for g, m in prof.ALLERGENS.items()},
+                        "health": {k: v for k, v in prof.HEALTH_TO_INSTRUCTION.items()},
+                        "age_groups": prof.AGE_GROUPS, "spice": list(prof.SPICE_HI), "diets": list(prof.DIETS),
+                        "weekdays": list(prof.WEEKDAYS)},
+            "push": {"available": can_push, "reason": "" if can_push else
+                     "Set INYA_PLATFORM_KEY and INYA_BOT_ID in .env to push the prompt to your Gnani agent."},
+        }
+
+    @app.get("/api/{hid}/studio")
+    def studio_get(hid: str):
+        return studio_state(hid)
+
+    @app.put("/api/{hid}/studio/prompt")
+    def studio_prompt_save(hid: str, body: PromptBody):
+        need(hid)
+        checks = studio.check_prompt(body.content)
+        if checks["errors"]:
+            raise HTTPException(422, {"errors": checks["errors"], "warnings": checks["warnings"]})
+        if checks["blocking_safety"] and not body.force:
+            raise HTTPException(409, {"needs_force": True, "warnings": checks["warnings"]})
+        studio.save(db, hid, "prompt", studio.PROMPT, body.content)
+        repo.audit(db, hid, "studio_prompt_saved", chars=len(body.content), forced=body.force)
+        return {"saved": True, "warnings": checks["warnings"]}
+
+    @app.delete("/api/{hid}/studio/prompt")
+    def studio_prompt_reset(hid: str):
+        need(hid)
+        studio.reset(db, hid, "prompt", studio.PROMPT)
+        return {"reset": True}
+
+    @app.post("/api/{hid}/studio/prompt/preview")
+    def studio_prompt_preview(hid: str, body: PreviewBody):
+        """Render the prompt exactly as the agent will receive it, with today's real variables if there is a menu."""
+        need(hid)
+        content = body.content if body.content is not None else studio.current_prompt(db, hid)[0]
+        if body.call_type not in ("brief", "reconcile"):
+            raise HTTPException(400, "call_type must be brief or reconcile")
+        try:
+            return studio.preview(db, hid, content, body.call_type, studio.live_variables(db, hid, body.call_type))
+        except Exception as e:
+            raise HTTPException(422, {"errors": [str(e)]})
+
+    @app.post("/api/{hid}/studio/prompt/push")
+    def studio_prompt_push(hid: str):
+        need(hid)
+        if platform is None or not settings.inya_bot_id:
+            raise HTTPException(409, "Set INYA_PLATFORM_KEY and INYA_BOT_ID first.")
+        content = studio.current_prompt(db, hid)[0]
+        try:
+            platform.validate_prompt(content)
+            platform.update_agent(settings.inya_bot_id, {"systemPrompt": content})
+        except PlatformError as e:
+            raise HTTPException(502, str(e))
+        repo.audit(db, hid, "studio_prompt_pushed", bot=settings.inya_bot_id)
+        return {"pushed": True}
+
+    @app.put("/api/{hid}/studio/docs/{name}")
+    def studio_doc_save(hid: str, name: str, body: DocBody):
+        h = need(hid)
+        defaults = gnani_kb.build_docs(h["preferences"], h["family_size"])
+        if name not in defaults and not studio.CUSTOM_RE.match(name):
+            raise HTTPException(404, "unknown document")
+        checks = studio.check_doc(name, body.content)
+        if checks["errors"]:
+            raise HTTPException(422, {"errors": checks["errors"], "warnings": []})
+        studio.save(db, hid, "doc", name, body.content)
+        repo.audit(db, hid, "studio_doc_saved", doc=name, chars=len(body.content))
+        return {"saved": True, "warnings": checks["warnings"]}
+
+    @app.post("/api/{hid}/studio/docs")
+    def studio_doc_create(hid: str, body: DocBody):
+        need(hid)
+        name = (body.name or "").strip().lower()
+        if not studio.CUSTOM_RE.match(name):
+            raise HTTPException(422, {"errors": ["Name it like custom_festivals.md (letters, digits, - and _)."]})
+        if sum(d["custom"] for d in studio.current_docs(db, hid, {}, 4)) >= 20:
+            raise HTTPException(422, {"errors": ["At most 20 custom documents."]})
+        checks = studio.check_doc(name, body.content)
+        if checks["errors"]:
+            raise HTTPException(422, {"errors": checks["errors"], "warnings": []})
+        studio.save(db, hid, "doc", name, body.content)
+        return {"saved": True, "warnings": checks["warnings"]}
+
+    @app.delete("/api/{hid}/studio/docs/{name}")
+    def studio_doc_reset(hid: str, name: str):
+        need(hid)
+        studio.reset(db, hid, "doc", name)
+        return {"reset": True}
+
+    @app.put("/api/{hid}/studio/faqs")
+    def studio_faqs_save(hid: str, body: FaqBody):
+        need(hid)
+        checks = studio.check_faqs(body.faqs)
+        if checks["errors"]:
+            raise HTTPException(422, {"errors": checks["errors"], "warnings": []})
+        studio.save(db, hid, "faqs", "faqs", json.dumps(body.faqs, ensure_ascii=False))
+        return {"saved": True, "warnings": checks["warnings"]}
+
+    @app.delete("/api/{hid}/studio/faqs")
+    def studio_faqs_reset(hid: str):
+        need(hid)
+        studio.reset(db, hid, "faqs", "faqs")
+        return {"reset": True}
+
+    @app.post("/api/{hid}/studio/restore")
+    def studio_restore(hid: str, body: RestoreBody):
+        need(hid)
+        if not studio.restore(db, hid, body.version_id):
+            raise HTTPException(404, "no such version")
+        return {"restored": True}
+
+    @app.put("/api/{hid}/studio/profile")
+    def studio_profile_save(hid: str, data: dict):
+        h = need(hid)
+        clean, errors = prof.sanitize_profile(data)
+        if errors:
+            raise HTTPException(422, {"errors": errors})
+        columns = {k: clean.pop(k) for k in ("family_size", "cook_phone") if k in clean}
+        repo.update_household(db, hid, preferences={**h["preferences"], **clean}, **columns)
+        repo.audit(db, hid, "profile_edited", fields=sorted([*clean, *columns]))
+        return {"saved": True}
+
+    @app.get("/api/{hid}/studio/export.zip")
+    def studio_export(hid: str):
+        h = need(hid)
+        return Response(studio.export_zip(db, hid, h["preferences"], h["family_size"]), media_type="application/zip",
+                        headers={"Content-Disposition": 'attachment; filename="cooksmart-gnani-agent.zip"'})
 
     @app.post("/api/{hid}/calls/{ref:path}/simulate")
     def simulate_call(hid: str, ref: str, body: SimulateBody):

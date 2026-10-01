@@ -244,13 +244,15 @@ def build_faqs(prefs: dict, limit: int = 100) -> list[dict]:
     return faqs[:limit]
 
 
-def write(out_dir, prefs: dict, family: int = 4) -> list[str]:
+def write(out_dir, prefs: dict, family: int = 4, docs: dict | None = None, faqs: list | None = None) -> list[str]:
+    """Write the knowledge base. `docs`/`faqs` carry the owner's Studio edits; without them, the generated defaults."""
     from pathlib import Path
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     names = []
-    for name, text in build_docs(prefs, family).items():
+    for name, text in (docs if docs is not None else build_docs(prefs, family)).items():
         (out / name).write_text(text, encoding="utf-8")
         names.append(name)
-    (out / "faqs.json").write_text(json.dumps(build_faqs(prefs), ensure_ascii=False, indent=2), encoding="utf-8")
+    (out / "faqs.json").write_text(json.dumps(faqs if faqs is not None else build_faqs(prefs), ensure_ascii=False, indent=2),
+                                   encoding="utf-8")
     return names + ["faqs.json"]

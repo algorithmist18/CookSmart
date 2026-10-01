@@ -116,6 +116,15 @@ CREATE TABLE IF NOT EXISTS calls (
     payload TEXT,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS studio_docs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id TEXT NOT NULL,
+    kind TEXT NOT NULL,                              -- prompt | doc | faqs
+    name TEXT NOT NULL,                              -- 'cook_call' | '03_swaad_aur_pasand.md' | 'faqs'
+    content TEXT,                                    -- NULL = "reset to default" marker
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_studio ON studio_docs (household_id, kind, name, id);
 CREATE INDEX IF NOT EXISTS idx_msg ON messages (household_id, channel, id);
 """
 

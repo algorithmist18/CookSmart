@@ -13,27 +13,30 @@ flow runs locally with no accounts. Real providers can be swapped in later witho
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python -m cooksmart            # open http://127.0.0.1:8000
-python -m pytest               # 237 tests, fully offline
+python -m pytest               # 276 tests, fully offline
 ```
 
 Optional: `cp .env.example .env` and add `ANTHROPIC_API_KEY` so Claude plans menus and parses the cook's
 messages. Without a key, a built-in heuristic planner and a rule-based Hindi/Hinglish/English parser are used.
 
-## The simulator
+## The app: four views
 
-Two WhatsApp-style phones (owner on the left, **you playing the cook** in the middle) and a control room.
-Agent messages arrive with typing indicators, ticks turn blue when answered, the cook's messages are Hindi
-voice notes (tap ▶ to hear them in your browser; tick "speak agent voice notes" to auto-play), and
-interactive buttons appear under messages like WhatsApp's quick replies. In Chrome the cook's 🎤 button
-records real Hindi speech; elsewhere type and it is sent as a voice note.
+| View | What it is for |
+|---|---|
+| **Simulator** | Two WhatsApp-style phones (you, and the cook that you play) with three cards: pick a situation, press the one *What happens next* button, and a few settings. Nothing else on screen. |
+| **How it works** | One diagram of the whole flow: an evening of planning, a morning of cooking, a check at the end. Click any step to see what happens, what goes wrong, and what the agent will never do. The step your simulation is on is highlighted. |
+| **Agent Studio** | Edit what the Gnani voice agent is told: the **system prompt**, the **knowledge base** documents (and add your own), the **FAQs**, and the **household** (people, allergies, taste, kitchen). |
+| **Kitchen & logs** | Stock with use-by dates, orders, the door check, switches to make things fail on purpose, and an audit log of every decision. |
 
-* **Scenarios** (21): spoilage crunch, stale fridge, guests, Jain, Navratri fasting, non-veg, light food,
-  empty pantry, cook on leave, gas runs out, pressure cooker breaks, spinach goes bad, you don't reply,
-  payment declined, store cancels, out of stock, overpriced, late delivery, unclear voice, a stranger at the
-  door... Press **Start here** to begin in that situation or **Watch it play out** for a scripted run.
-* **What happens next** is a guided button plus a stepper, so you never wonder what to press.
-* **Ordering mode** toggle: *Approve each order* or *Auto-order within limits*.
-* **Break things**, **Door**, live **kitchen stock**, **orders** and an **audit log** of every decision.
+**Agent Studio** keeps every edit as a version you can restore, and checks before saving: a prompt that wouldn't render
+(or uses a variable CookSmart doesn't send) is refused, and removing today's allergy cautions needs an explicit
+confirmation. *Preview* shows the prompt exactly as the agent will receive it, with today's real data. *Push to Gnani*
+updates your agent (needs `INYA_PLATFORM_KEY` and `INYA_BOT_ID`), and *Download all* gives a zip to upload by hand.
+
+Agent messages arrive with typing indicators and blue ticks, the cook's messages are Hindi voice notes (tap ▶, or tick
+*speak replies*), and buttons appear under messages like WhatsApp quick replies. In Chrome the cook's 🎤 records real
+speech. There are 26 situations (spoilage, guests, Jain, fasting, allergies, broken stove, failed payment, a stranger at
+the door, the phone-call agent…): choose one and press **Start**, or **Play it for me**.
 
 ## Gnani voice for the cook
 

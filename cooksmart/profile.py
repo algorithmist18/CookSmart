@@ -112,3 +112,106 @@ def cook_safe_summary(prefs: dict) -> str:
         if ins:
             lines.append(f"{m['name']} ({AGE_GROUPS.get(m.get('age_group', 'adult'), 'बड़े')}): " + "; ".join(ins))
     return "\n".join(lines)
+
+
+# ------------------------------------------------------------------ validated editing (Agent Studio)
+WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+DIETS = ("vegetarian", "eggetarian", "nonveg", "jain")
+
+
+def _text(v, n: int) -> str:
+    return "".join(c for c in str(v or "") if c.isprintable() or c in "\n").strip()[:n]
+
+
+def sanitize_profile(data: dict) -> tuple[dict, list[str]]:
+    """Validate what the profile editor sends. Returns (clean, errors); clean only has keys that were provided."""
+    errors: list[str] = []
+    out: dict = {}
+
+    if "family_size" in data:
+        try:
+            n = int(data["family_size"])
+            (out.__setitem__("family_size", n) if 1 <= n <= 20 else errors.append("Family size must be 1–20."))
+        except (TypeError, ValueError):
+            errors.append("Family size must be a number.")
+    if "diet" in data:
+        (out.__setitem__("diet", data["diet"]) if data["diet"] in DIETS else errors.append("Unknown diet."))
+    if "lactose_free" in data:
+        out["lactose_free"] = bool(data["lactose_free"])
+    if "cook_name" in data:
+        out["cook_name"] = _text(data["cook_name"], 40) or "दीदी"
+    if "cook_phone" in data:
+        phone = _text(data["cook_phone"], 20)
+        import re
+        if phone and not re.fullmatch(r"\+?[0-9][0-9 \-]{6,18}", phone):
+            errors.append("The cook's phone number doesn't look right.")
+        else:
+            out["cook_phone"] = phone or None
+
+    if "members" in data:
+        members_out = []
+        if not isinstance(data["members"], list) or len(data["members"]) > 12:
+            errors.append("At most 12 household members.")
+        else:
+            for i, m in enumerate(data["members"], 1):
+                name = _text(m.get("name"), 40)
+                if not name:
+                    errors.append(f"Member {i} needs a name.")
+                    continue
+                if m.get("age_group", "adult") not in AGE_GROUPS:
+                    errors.append(f"{name}: unknown age group.")
+                    continue
+                bad = [a for a in m.get("allergies", []) if a not in ALLERGENS]
+                bad += [h for h in m.get("health", []) if h not in HEALTH_TO_INSTRUCTION]
+                bad += [x for x in m.get("avoid", []) if x not in ITEMS]
+                if bad:
+                    errors.append(f"{name}: unknown value(s) {bad}.")
+                    continue
+                if m.get("spice") and m["spice"] not in SPICE_HI:
+                    errors.append(f"{name}: unknown spice level.")
+                    continue
+                members_out.append({
+                    "name": name, "age_group": m.get("age_group", "adult"),
+                    "allergies": sorted(set(m.get("allergies", []))), "health": sorted(set(m.get("health", []))),
+                    "avoid": sorted(set(m.get("avoid", []))), **({"spice": m["spice"]} if m.get("spice") else {}),
+                    "notes": [t for t in (_text(n, 200) for n in m.get("notes", [])[:5]) if t]})
+            out["members"] = members_out
+
+    if "style" in data:
+        st = {}
+        for k, allowed in (("spice", SPICE_HI), ("oil", LEVEL_HI), ("salt", LEVEL_HI), ("sugar", LEVEL_HI)):
+            v = (data["style"] or {}).get(k)
+            if v:
+                (st.__setitem__(k, v) if v in allowed else errors.append(f"Unknown {k} setting."))
+        out["style"] = st
+
+    if "customs" in data:
+        customs = []
+        for c in (data["customs"] or [])[:10]:
+            if isinstance(c, str):
+                if _text(c, 200):
+                    customs.append(_text(c, 200))
+            elif isinstance(c, dict):
+                wd = (c.get("weekday") or "").lower()
+                avoid = [x for x in c.get("avoid", []) if x in ITEMS]
+                if wd and wd not in WEEKDAYS:
+                    errors.append("A custom has an unknown weekday.")
+                    continue
+                customs.append({"weekday": wd, "avoid": avoid, "text": _text(c.get("text"), 200)})
+        out["customs"] = customs
+
+    if "kitchen" in data:
+        k = data["kitchen"] or {}
+        try:
+            out["kitchen"] = {"burners": max(0, min(10, int(k.get("burners") or 0))),
+                              "cooker_litres": max(0, min(20, float(k.get("cooker_litres") or 0))),
+                              "notes": [t for t in (_text(n, 200) for n in (k.get("notes") or [])[:8]) if t]}
+        except (TypeError, ValueError):
+            errors.append("Kitchen numbers must be numbers.")
+    if "units" in data:
+        try:
+            ml = int((data["units"] or {}).get("katori_ml") or 150)
+            (out.__setitem__("units", {"katori_ml": ml}) if 50 <= ml <= 400 else errors.append("A katori is 50–400 ml."))
+        except (TypeError, ValueError):
+            errors.append("Katori size must be a number.")
+    return out, errors

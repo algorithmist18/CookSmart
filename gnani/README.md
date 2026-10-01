@@ -23,6 +23,12 @@ CookSmart ── trigger_call(variables) ──► Gnani agent ──► phone c
 Not in the knowledge base on purpose: recipes (she knows them), prices, orders, payments, vendors, delivery
 times, any diagnosis (the cook sees *"less salt, less sugar"*, never the condition), and other households' data.
 
+## Editing it
+
+Everything below can be edited in the app's **Agent Studio** tab (prompt, knowledge base, FAQs, household) with version history
+and pre-save checks. **Download all** gives a zip to upload by hand; **Push to Gnani** updates the prompt on your agent directly.
+The commands below do the same from a terminal, and `gnani_cli kb` includes any edits made in the Studio.
+
 ## Setup
 
 1. **Keys.** Platform key with `agents` and `conversations` permissions → `INYA_PLATFORM_KEY`. (The Speech API key,

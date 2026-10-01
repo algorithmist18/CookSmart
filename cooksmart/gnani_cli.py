@@ -11,21 +11,22 @@ import argparse
 import json
 import sys
 
-from . import gnani_kb, gnani_prompt, repo
+from . import gnani_kb, gnani_prompt, repo, studio
 from .config import get_settings
 from .db import DB
 from .providers.gnani_platform import GnaniPlatform, PlatformError
 
 
-def _prefs(household: str, db_path: str) -> tuple[dict, int]:
+def _prefs(household: str, db_path: str) -> tuple[dict, int, DB | None]:
     try:
-        h = repo.get_household(DB(db_path), household)
+        db = DB(db_path)
+        h = repo.get_household(db, household)
     except Exception:
-        h = None
+        db, h = None, None
     if h and (h["preferences"].get("members") or h["preferences"].get("allergies")):
-        return h["preferences"], h["family_size"]
+        return h["preferences"], h["family_size"], db
     print(f"(no saved profile for '{household}': using the demo family)", file=sys.stderr)
-    return gnani_kb.DEMO_PROFILE, 4
+    return gnani_kb.DEMO_PROFILE, 4, None
 
 
 def main(argv=None) -> int:
@@ -38,14 +39,19 @@ def main(argv=None) -> int:
     s = get_settings()
 
     if a.cmd == "kb":
-        prefs, family = _prefs(a.household, s.db_path)
-        for name in gnani_kb.write(a.out, prefs, family):
+        prefs, family, db = _prefs(a.household, s.db_path)
+        docs = faqs = None
+        if db is not None:                      # include whatever was edited in Agent Studio
+            docs = {d["name"]: d["content"] for d in studio.current_docs(db, a.household, prefs, family)}
+            faqs = studio.current_faqs(db, a.household, prefs)[0]
+        for name in gnani_kb.write(a.out, prefs, family, docs, faqs):
             print("wrote", f"{a.out}/{name}")
         print("\nUpload the .md files in the Gnani console (Agent > Knowledge base); faqs.json holds the exact-answer Q&A.")
         return 0
 
     if a.cmd == "check":
         prompt = gnani_prompt.load_prompt()
+        print("(checking the shipped gnani/prompt.j2; edits made in Agent Studio are checked there)")
         for t in ("brief", "reconcile"):
             out = gnani_prompt.render(gnani_prompt.sample_variables(t), prompt)
             print(f"[local] {t} prompt renders OK ({len(out)} chars)")
