@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CookSmart (mock WhatsApp)</title>
+<style>
+  :root { --bg:#ece5dd; --panel:#fff; --me:#dcf8c6; --bot:#fff; --ink:#111; --mut:#667; --line:#d8d8d8; --acc:#128c7e; --warn:#c0392b; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0b141a; --panel:#1f2c34; --me:#005c4b; --bot:#202c33; --ink:#e9edef; --mut:#8696a0; --line:#2a3942; --acc:#25d366; --warn:#ff7b6b; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:10px 16px; background:var(--acc); color:#fff; }
+  header h1 { font-size:18px; margin:0; }
+  .seg { display:inline-flex; border:1px solid #fff8; border-radius:8px; overflow:hidden; }
+  .seg button { background:transparent; color:#fff; border:0; padding:6px 12px; cursor:pointer; }
+  .seg button.on { background:#fff; color:#075e54; font-weight:600; }
+  main { display:grid; grid-template-columns: 1fr 1fr 380px; gap:12px; padding:12px; height:calc(100vh - 56px); }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; height:auto; } .chat { height:70vh; } }
+  .col { background:var(--panel); border-radius:10px; display:flex; flex-direction:column; min-height:0; overflow:hidden; border:1px solid var(--line); }
+  .col h2 { margin:0; padding:10px 12px; font-size:14px; border-bottom:1px solid var(--line); }
+  .col h2 small { color:var(--mut); font-weight:400; }
+  .msgs { flex:1; overflow:auto; padding:10px; display:flex; flex-direction:column; gap:6px; background:var(--bg); }
+  .b { max-width:88%; padding:7px 10px; border-radius:8px; white-space:pre-wrap; word-wrap:break-word; }
+  .b.agent { background:var(--bot); align-self:flex-start; }
+  .b.user { background:var(--me); align-self:flex-end; }
+  .btns { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .btns button { border:1px solid var(--acc); color:var(--acc); background:transparent; border-radius:14px; padding:3px 10px; cursor:pointer; }
+  form.send { display:flex; gap:6px; padding:8px; border-top:1px solid var(--line); flex-wrap:wrap; }
+  form.send input[type=text] { flex:1; min-width:120px; padding:8px; border-radius:16px; border:1px solid var(--line); background:var(--panel); color:var(--ink); }
+  button.p { background:var(--acc); color:#fff; border:0; border-radius:16px; padding:8px 14px; cursor:pointer; }
+  .opts { width:100%; color:var(--mut); font-size:12px; display:flex; gap:12px; }
+  .side { overflow:auto; padding:10px; gap:10px; display:flex; flex-direction:column; }
+  .side section { border:1px solid var(--line); border-radius:8px; padding:8px; }
+  .side h3 { margin:0 0 6px; font-size:12px; text-transform:uppercase; color:var(--mut); letter-spacing:.05em; }
+  .row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .row button, .side input[type=number] { padding:4px 8px; border:1px solid var(--line); background:var(--panel); color:var(--ink); border-radius:6px; cursor:pointer; }
+  .side input[type=number], .side input[type=text] { width:80px; cursor:text; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:4px 6px; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  td, th { padding:2px 4px; border-bottom:1px solid var(--line); text-align:left; }
+  .tag { padding:1px 6px; border-radius:8px; font-size:11px; background:var(--line); }
+  .tag.bad { background:var(--warn); color:#fff; }
+  .log { font:11px/1.3 ui-monospace, monospace; max-height:160px; overflow:auto; }
+  .note { color:var(--mut); font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🍲 CookSmart <small style="font-weight:400">· mock WhatsApp</small></h1>
+  <span>Ordering mode:</span>
+  <span class="seg" id="modeSeg">
+    <button data-m="approve">Approve each order</button>
+    <button data-m="auto">Auto-order within limits</button>
+  </span>
+  <label>limit ₹ <input id="cap" type="number" min="0" style="width:80px"></label>
+  <span id="status" style="margin-left:auto"></span>
+</header>
+<main>
+  <div class="col chat">
+    <h2>👤 Owner chat <small>(you: inventory, gaps, prices, approvals)</small></h2>
+    <div class="msgs" id="ownerMsgs"></div>
+    <form class="send" id="ownerForm"><input type="text" id="ownerIn" placeholder="e.g. 1 and 2 · palak paneer · cream 100 ml · approve" autocomplete="off"><button class="p">Send</button></form>
+  </div>
+  <div class="col chat">
+    <h2>👩‍🍳 Cook chat <small>(Hindi: only what to make)</small></h2>
+    <div class="msgs" id="cookMsgs"></div>
+    <form class="send" id="cookForm">
+      <input type="text" id="cookIn" placeholder="e.g. paneer khatam · 2 टमाटर बचे · gas kharab hai · haan" autocomplete="off"><button class="p">Send</button>
+      <div class="opts"><label><input type="checkbox" id="asVoice" checked> as voice note (simulated)</label>
+      <label><input type="checkbox" id="speak"> speak cook messages (hi-IN)</label></div>
+    </form>
+  </div>
+  <div class="col side">
+    <section><h3>Day cycle (what a scheduler would trigger)</h3>
+      <div class="row">
+        <button data-t="nightly_review">1 · Nightly review</button>
+        <button data-t="cutoff">2 · Reply cutoff (silence)</button>
+        <button data-t="morning">3 · Cook arrives</button>
+        <button data-t="check_orders">Re-check orders</button>
+        <button data-t="end_of_day">4 · End of day</button>
+        <button data-t="close_day">5 · Close day</button>
+      </div>
+      <div class="note" id="planInfo"></div>
+    </section>
+    <section><h3>Door (voice handshake)</h3>
+      <div class="row">
+        <button data-door="cook">Rider · cook's voice</button>
+        <button data-door="stranger">Rider · stranger's voice</button>
+        <button data-door="none">Rider · no voice</button>
+      </div>
+      <div class="row" style="margin-top:6px"><input type="text" id="otp" placeholder="OTP"><button id="otpBtn">Enter OTP at door</button></div>
+      <div class="note" id="doorRes"></div>
+    </section>
+    <section><h3>Break things (mock rails)</h3>
+      <div class="row">
+        <label><input type="checkbox" data-c="payment_fails"> payment fails</label>
+        <label><input type="checkbox" data-c="cancel_after_accept"> store cancels after accepting</label>
+        <label><input type="checkbox" data-c="stt_low_confidence"> cook's voice unclear</label>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <label>price × <input type="number" step="0.1" min="0.5" data-n="price_factor" style="width:60px"></label>
+        <label>ETA +min <input type="number" min="0" data-n="eta_delay_min" style="width:70px"></label>
+        <label>out of stock <input type="text" data-oos placeholder="cream,paneer" style="width:110px"></label>
+      </div>
+    </section>
+    <section><h3>Inventory</h3><div id="inv"></div></section>
+    <section><h3>Orders</h3><div id="orders" class="note">none</div></section>
+    <section><h3>Audit log <span class="note" id="srcs"></span></h3><div class="log" id="audit"></div></section>
+  </div>
+</main>
+<script>
+const HID = 'demo';
+const api = (p, o) => fetch('/api/' + p, o ? { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(o) } : undefined).then(r => r.json());
+const last = { owner: 0, cook: 0 };
+const $ = s => document.querySelector(s);
+
+function bubble(box, m, who, onBtn) {
+  const d = document.createElement('div');
+  d.className = 'b ' + m.sender;
+  d.textContent = m.text;
+  if (m.payload && m.payload.buttons && m.sender === 'agent') {
+    const b = document.createElement('div'); b.className = 'btns';
+    m.payload.buttons.forEach(t => { const x = document.createElement('button'); x.textContent = t; x.onclick = () => onBtn(t); b.appendChild(x); });
+    d.appendChild(b);
+  }
+  box.appendChild(d); box.scrollTop = box.scrollHeight;
+}
+const sendOwner = t => api(HID + '/owner/message', { text: t }).then(refresh);
+const sendCook = (t, voice) => api(HID + '/cook/message', { text: t, voice }).then(refresh);
+
+async function pull(kind) {
+  const msgs = await api(`${HID}/${kind}/messages?after=${last[kind]}`);
+  const box = $(kind === 'owner' ? '#ownerMsgs' : '#cookMsgs');
+  msgs.forEach(m => {
+    bubble(box, m, kind, kind === 'owner' ? sendOwner : t => sendCook(t, $('#asVoice').checked));
+    last[kind] = m.id;
+    if (kind === 'cook' && m.sender === 'agent' && $('#speak').checked && 'speechSynthesis' in window) {
+      const u = new SpeechSynthesisUtterance(m.text); u.lang = 'hi-IN'; speechSynthesis.speak(u);
+    }
+  });
+}
+
+function renderState(s) {
+  const h = s.household;
+  document.querySelectorAll('#modeSeg button').forEach(b => b.classList.toggle('on', b.dataset.m === h.order_mode));
+  if (document.activeElement !== $('#cap')) $('#cap').value = h.auto_cap;
+  $('#status').textContent = `planner: ${s.planner} · NLU: ${s.nlu_source} · sim date ${h.sim_date}`;
+  const p = s.plan;
+  $('#planInfo').textContent = p ? `Plan for ${p.day}: ${p.state}${p.chosen.length ? ' · ' + p.chosen.join(', ') : ''}${p.chosen.length && !p.reviewed ? ' (not reviewed)' : ''}` : 'No plan yet.';
+  $('#inv').innerHTML = '<table><tr><th>item</th><th>qty</th><th>expires</th><th></th></tr>' + s.inventory.filter(i => i.qty > 0 || i.confidence).map(i =>
+    `<tr><td>${i.name}</td><td>${+i.qty.toFixed(1)} ${i.unit}</td><td>${i.expires_on || '–'}${i.days_left !== null && i.days_left <= 1 ? ' ⚠️' : ''}</td><td>${i.spoiled ? '<span class="tag bad">spoiled</span>' : (i.confidence === 'uncertain' || i.doubtful) ? '<span class="tag bad">unsure</span>' : ''}</td></tr>`).join('') + '</table>';
+  $('#orders').innerHTML = s.orders.length ? s.orders.map(o => `#${o.id} ${o.store} ₹${o.total} <span class="tag ${o.status === 'accepted' || o.status === 'delivered' ? '' : 'bad'}">${o.status}</span> · ${o.authorization}`).join('<br>') : 'none';
+  $('#audit').innerHTML = s.audit.map(a => `${a.ts.slice(11, 19)} ${a.event} ${JSON.stringify(a.detail).slice(0, 110)}`).join('<br>');
+  const c = s.controls;
+  document.querySelectorAll('[data-c]').forEach(e => { if (document.activeElement !== e) e.checked = !!c[e.dataset.c]; });
+  document.querySelectorAll('[data-n]').forEach(e => { if (document.activeElement !== e) e.value = c[e.dataset.n]; });
+  const oos = $('[data-oos]'); if (document.activeElement !== oos) oos.value = c.out_of_stock.join(',');
+}
+
+async function refresh() {
+  const s = await api(HID + '/owner/state');
+  renderState(s);
+  await pull('owner'); await pull('cook');
+}
+
+document.querySelectorAll('#modeSeg button').forEach(b => b.onclick = () => api(HID + '/settings', { order_mode: b.dataset.m }).then(refresh));
+$('#cap').onchange = e => api(HID + '/settings', { auto_cap: +e.target.value }).then(refresh);
+document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => api(`${HID}/trigger/${b.dataset.t}`, {}).then(refresh));
+document.querySelectorAll('[data-door]').forEach(b => b.onclick = async () => {
+  const r = await api(HID + '/door/arrive', { voice: b.dataset.door });
+  $('#doorRes').textContent = r.released ? `Released via ${r.via}.` : (r.otp_required ? 'Voice check failed: OTP sent to owner chat. Not released.' : r.reason);
+  refresh();
+});
+$('#otpBtn').onclick = async () => {
+  const r = await api(HID + '/door/otp', { code: $('#otp').value });
+  $('#doorRes').textContent = r.released ? 'Released via OTP.' : ('Not released: ' + r.reason); $('#otp').value = ''; refresh();
+};
+const putControls = o => api('mock/controls', o).then(refresh);
+document.querySelectorAll('[data-c]').forEach(e => e.onchange = () => putControls({ [e.dataset.c]: e.checked }));
+document.querySelectorAll('[data-n]').forEach(e => e.onchange = () => putControls({ [e.dataset.n]: +e.value }));
+$('[data-oos]').onchange = e => putControls({ out_of_stock: e.target.value.split(',').map(x => x.trim()).filter(Boolean) });
+$('#ownerForm').onsubmit = e => { e.preventDefault(); const t = $('#ownerIn').value.trim(); if (t) { $('#ownerIn').value = ''; sendOwner(t); } };
+$('#cookForm').onsubmit = e => { e.preventDefault(); const t = $('#cookIn').value.trim(); if (t) { $('#cookIn').value = ''; sendCook(t, $('#asVoice').checked); } };
+
+api('households', { id: HID }).then(refresh).then(() => setInterval(refresh, 1500));
+</script>
+</body>
+</html>
