@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS households (
     pincode TEXT NOT NULL DEFAULT '560001',
     preferences TEXT NOT NULL DEFAULT '{}',
     cook_voice_enrolled INTEGER NOT NULL DEFAULT 0,
+    family_size INTEGER NOT NULL DEFAULT 4,
     sim_date TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS inventory (
@@ -55,7 +56,8 @@ CREATE TABLE IF NOT EXISTS plans (
     pending TEXT,                                    -- cook read-back awaiting yes/no
     report TEXT NOT NULL DEFAULT '{}',               -- what the cook reported using (S8)
     notes TEXT NOT NULL DEFAULT '[]',
-    excluded TEXT NOT NULL DEFAULT '[]'              -- dish ids the owner already passed on
+    excluded TEXT NOT NULL DEFAULT '[]',             -- main dish ids the owner already passed on
+    flags TEXT NOT NULL DEFAULT '{}'                 -- per-day: guests, fasting, light, cook_off, scale
 );
 CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,6 +102,14 @@ CREATE INDEX IF NOT EXISTS idx_msg ON messages (household_id, channel, id);
 """
 
 
+# Columns added after the first release: applied to databases created by older versions.
+MIGRATIONS = [
+    ("households", "family_size", "INTEGER NOT NULL DEFAULT 4"),
+    ("plans", "excluded", "TEXT NOT NULL DEFAULT '[]'"),
+    ("plans", "flags", "TEXT NOT NULL DEFAULT '{}'"),
+]
+
+
 class DB:
     """Thin sqlite wrapper. Every domain query in repo.py/inventory.py is scoped by household_id."""
 
@@ -109,6 +119,10 @@ class DB:
         self.lock = threading.RLock()
         with self.lock:
             self.conn.executescript(SCHEMA)
+            for table, col, ddl in MIGRATIONS:
+                cols = [r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")]
+                if col not in cols:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
             self.conn.commit()
 
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:

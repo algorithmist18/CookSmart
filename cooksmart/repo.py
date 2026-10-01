@@ -6,7 +6,7 @@ import json
 
 from .db import DB
 
-PLAN_JSON = ("proposals", "chosen", "feedback", "gaps", "offer", "brief", "pending", "report", "notes", "excluded")
+PLAN_JSON = ("proposals", "chosen", "feedback", "gaps", "offer", "brief", "pending", "report", "notes", "excluded", "flags")
 
 
 def now_iso() -> str:
@@ -39,6 +39,12 @@ def find_household_by_phone(db: DB, phone: str) -> tuple[dict, str] | None:
     return None
 
 
+def wipe_household_data(db: DB, hid: str) -> None:
+    """Scenario reset: delete everything the household has accumulated (keeps the household row)."""
+    for table in ("inventory", "meals", "plans", "orders", "messages", "audit", "memory"):
+        db.execute(f"DELETE FROM {table} WHERE household_id=?", (hid,))
+
+
 def update_household(db: DB, hid: str, **fields) -> None:
     if "preferences" in fields:
         fields["preferences"] = json.dumps(fields["preferences"])
@@ -52,9 +58,10 @@ def _decode_plan(row: dict | None) -> dict | None:
         return None
     for f in PLAN_JSON:
         row[f] = json.loads(row[f]) if row[f] else None
-    for f in ("proposals", "chosen", "feedback", "gaps", "notes", "excluded"):
+    for f in ("proposals", "chosen", "feedback", "gaps", "notes", "excluded", "flags"):
         row[f] = row[f] or []
     row["report"] = row["report"] or {}
+    row["flags"] = row["flags"] or {}
     row["reviewed"] = bool(row["reviewed"])
     return row
 

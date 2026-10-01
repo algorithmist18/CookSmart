@@ -12,7 +12,7 @@ import datetime as dt
 
 from . import repo
 from .db import DB
-from .recipes import ITEMS, RECIPES
+from .recipes import ITEMS, RECIPES, scale_qty
 
 STALE_DAYS = 3
 
@@ -97,12 +97,13 @@ def available(db: DB, hid: str, today: str, cook_day: str) -> dict[str, dict]:
     return out
 
 
-def needs_for(recipe_ids: list[str]) -> dict[str, dict]:
+def needs_for(recipe_ids: list[str], scale: float = 1.0) -> dict[str, dict]:
+    """Aggregate ingredient needs for a set of dishes, scaled for servings (recipes are for 4)."""
     needs: dict[str, dict] = {}
     for rid in recipe_ids:
         for item, (qty, unit) in RECIPES[rid]["needs"].items():
             slot = needs.setdefault(item, {"qty": 0.0, "unit": unit})
-            slot["qty"] += qty
+            slot["qty"] += scale_qty(qty, unit, scale)
     return needs
 
 
@@ -139,19 +140,24 @@ def apply_usage(db: DB, hid: str, needs: dict[str, dict], day: str, reported: se
     return touched
 
 
+DEFAULT_STOCK = [
+    # (item, qty, days until use-by or None, days since last confirmed)
+    ("tomato", 3, 2, 0), ("spinach", 300, 2, 0), ("paneer", 200, 4, 0),
+    ("onion", 6, 15, 0), ("potato", 4, 14, 0), ("dal", 500, None, 0), ("rice", 1000, None, 0),
+    ("atta", 800, None, 0), ("curd", 400, 4, 0), ("peas", 250, 5, 0),
+    ("cauliflower", 300, 3, 0), ("cucumber", 3, 4, 0),
+]
+
+
+def seed(db: DB, hid: str, day: str, spec: list[tuple]) -> None:
+    """Load a starting kitchen. Each row: (item, qty, days_to_use_by | None, days_since_confirmed)."""
+    d = _d(day)
+    for name, qty, exp_days, confirmed_ago in spec:
+        expires = (d + dt.timedelta(days=exp_days)).isoformat() if exp_days is not None else None
+        set_qty(db, hid, name, qty, (d - dt.timedelta(days=confirmed_ago)).isoformat(), expires_on=expires)
+    repo.audit(db, hid, "seed_inventory", items=len(spec))
+
+
 def seed_demo(db: DB, hid: str, day: str) -> None:
     """A realistic starting fridge: tomatoes and spinach are about to spoil; cream is missing."""
-    d = _d(day)
-
-    def exp(n):
-        return (d + dt.timedelta(days=n)).isoformat()
-
-    rows = [
-        ("tomato", 3, exp(2)), ("spinach", 300, exp(2)), ("paneer", 200, exp(4)),
-        ("onion", 6, exp(15)), ("potato", 4, exp(14)), ("dal", 500, None), ("rice", 1000, None),
-        ("atta", 800, None), ("curd", 400, exp(4)), ("peas", 250, exp(5)),
-        ("cauliflower", 300, exp(3)), ("cucumber", 3, exp(4)),
-    ]
-    for name, qty, e in rows:
-        set_qty(db, hid, name, qty, day, expires_on=e)
-    repo.audit(db, hid, "seed_inventory", items=len(rows))
+    seed(db, hid, day, DEFAULT_STOCK)

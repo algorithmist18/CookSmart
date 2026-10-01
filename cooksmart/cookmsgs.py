@@ -22,8 +22,16 @@ T = {
     "switch": "योजना बदली गई है। आज बनाना है: {dishes}।",
     "no_menu": "आज का मेन्यू थोड़ी देर में भेजा जाएगा।",
     "eod": "आज क्या-क्या खत्म हुआ या कितना बचा? बोलकर बता दें।",
-    "thanks": "धन्यवाद!",
+    "thanks": "धन्यवाद! 🙏",
+    "greet": "नमस्ते! 🙏 आप पहुँच जाएँ तो बता दें, मैं आज का मेन्यू भेज दूँगा।",
+    "menu_repeat": "आज बनाना है: {dishes}।",
+    "help": "समझ नहीं आया। आप ऐसे बोल सकते हैं: 'आ गई', 'पनीर खत्म', 'गैस खराब है', 'समय कम है', 'खाना बन गया'।",
+    "leave_ok": "ठीक है, बता दिया गया है। आराम करें। 🙏",
+    "great": "बहुत बढ़िया! 👍",
+    "relay": "संदेश: {text}",
 }
+
+QUICK = {"readback": ("हाँ", "नहीं"), "brief_end": ("हाँ", "नहीं")}
 
 
 def dish_names(recipe_ids: list[str]) -> str:
@@ -31,11 +39,11 @@ def dish_names(recipe_ids: list[str]) -> str:
 
 
 def render(key: str, lang: str = "hi-IN", **kw) -> CookMessage:
-    return CookMessage(T[key].format(**kw), lang)
+    return CookMessage(T[key].format(**kw), lang, QUICK.get(key, ()))
 
 
 def concat(*parts: CookMessage) -> CookMessage:
-    return CookMessage("".join(p.text for p in parts), parts[0].lang)
+    return CookMessage("".join(p.text for p in parts), parts[0].lang, parts[-1].buttons)
 
 
 def summarize_intents(intents: list[dict]) -> str:
@@ -51,7 +59,10 @@ def summarize_intents(intents: list[dict]) -> str:
             bits.append(f"{hi} {q} {UNIT_HI.get(i['unit'], '')} बचा है".replace("  ", " "))
         elif t == "low":
             bits.append(f"{hi} कम है")
+        elif t == "spoiled":
+            bits.append(f"{hi} खराब हो गया")
         elif t == "cannot_cook":
             bits.append("गैस/चूल्हा खराब है" if i.get("reason") == "stove" else
+                        "कुकर खराब है" if i.get("reason") == "cooker" else
                         "आज समय कम है" if i.get("reason") == "time" else "आज बनाने में दिक्कत है")
     return "; ".join(bits)

@@ -14,7 +14,8 @@ def stock(e, name):
 def test_menu_covers_expiring_items(env):
     env.agent.nightly_review(env.hid)
     plan = env.plan()
-    used = {i for p in plan["proposals"] for i in __import__("cooksmart.recipes", fromlist=["x"]).RECIPES[p["recipe_id"]]["needs"]}
+    from cooksmart.recipes import RECIPES
+    used = {i for p in plan["proposals"] for rid in p["recipe_ids"] for i in RECIPES[rid]["needs"]}
     assert {"tomato", "spinach"} <= used          # the two things about to spoil
     assert plan["state"] == "review"
 
@@ -37,9 +38,9 @@ def test_stale_perishables_are_not_trusted(env):
 
 def test_rejection_replans_then_offers_ordering_after_two_tries(env):
     env.agent.nightly_review(env.hid)
-    first = [p["recipe_id"] for p in env.plan()["proposals"]]
+    first = [p["recipe_ids"][0] for p in env.plan()["proposals"]]
     env.agent.handle_owner(env.hid, "something else")
-    second = [p["recipe_id"] for p in env.plan()["proposals"]]
+    second = [p["recipe_ids"][0] for p in env.plan()["proposals"]]
     assert not set(first) & set(second)
     env.agent.handle_owner(env.hid, "something else")
     env.agent.handle_owner(env.hid, "something else")
@@ -105,7 +106,7 @@ def test_silence_never_orders_even_in_auto_mode(env):
     env.agent.nightly_review(env.hid)
     from cooksmart.planner import PlanContext, enrich
     ctx = PlanContext(cook_day=env.plan()["day"], stock=inv.available(env.db, env.hid, DAY, env.plan()["day"]))
-    repo.update_plan(env.db, env.hid, env.plan()["id"], proposals=[enrich("palak_paneer", ctx).as_dict()])
+    repo.update_plan(env.db, env.hid, env.plan()["id"], proposals=[enrich(["palak_paneer"], ctx).as_dict()])
     env.agent.cutoff(env.hid)
     plan = env.plan()
     assert plan["chosen"] == ["palak_paneer"] and plan["reviewed"] is False
@@ -317,8 +318,8 @@ def test_repeat_penalty_after_closing_a_day(env):
     env.agent.close_day(env.hid)
     inv.confirm_all(env.db, env.hid, env.plan()["day"])
     env.agent.nightly_review(env.hid)
-    proposals = [p["recipe_id"] for p in env.plan()["proposals"]]
-    assert "dal_tadka" not in proposals
+    mains = [p["recipe_ids"][0] for p in env.plan()["proposals"]]
+    assert "dal_tadka" not in mains
 
 
 # ---------------------------------------------------------------- boundaries

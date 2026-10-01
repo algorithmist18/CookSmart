@@ -3,153 +3,394 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CookSmart (mock WhatsApp)</title>
+<title>CookSmart · WhatsApp simulator</title>
 <style>
-  :root { --bg:#ece5dd; --panel:#fff; --me:#dcf8c6; --bot:#fff; --ink:#111; --mut:#667; --line:#d8d8d8; --acc:#128c7e; --warn:#c0392b; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#0b141a; --panel:#1f2c34; --me:#005c4b; --bot:#202c33; --ink:#e9edef; --mut:#8696a0; --line:#2a3942; --acc:#25d366; --warn:#ff7b6b; } }
-  * { box-sizing: border-box; }
-  body { margin:0; font:14px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--ink); }
-  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:10px 16px; background:var(--acc); color:#fff; }
-  header h1 { font-size:18px; margin:0; }
-  .seg { display:inline-flex; border:1px solid #fff8; border-radius:8px; overflow:hidden; }
-  .seg button { background:transparent; color:#fff; border:0; padding:6px 12px; cursor:pointer; }
+  :root {
+    --bg:#e9edef; --top:#008069; --ink:#111b21; --mut:#667781; --line:#d1d7db; --card:#fff;
+    --head:#008069; --headink:#fff; --chat:#efeae2; --in:#fff; --out:#d9fdd3; --inkb:#111b21;
+    --link:#027eb5; --btn:#00a5f4; --accent:#00a884; --warn:#d93025; --amber:#b26a00; --tick:#53bdeb;
+    --input:#f0f2f5; --dot:#0000000d;
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --bg:#0b141a; --top:#202c33; --ink:#e9edef; --mut:#8696a0; --line:#2a3942; --card:#111b21;
+    --head:#202c33; --headink:#e9edef; --chat:#0b141a; --in:#202c33; --out:#005c4b; --inkb:#e9edef;
+    --link:#53bdeb; --btn:#53bdeb; --accent:#00a884; --warn:#ff7b6b; --amber:#f0b24a; --tick:#53bdeb;
+    --input:#202c33; --dot:#ffffff0a;
+  } }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans Devanagari",sans-serif; }
+
+  /* ---------- top bar ---------- */
+  .top { display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; padding:10px 16px; background:var(--top); color:#fff; }
+  .top h1 { margin:0; font-size:17px; font-weight:600; }
+  .top .grow { flex:1; }
+  .mode { display:flex; align-items:center; gap:8px; }
+  .seg { display:inline-flex; border:1px solid #ffffff66; border-radius:999px; overflow:hidden; }
+  .seg button { background:transparent; color:#fff; border:0; padding:6px 14px; cursor:pointer; font:inherit; }
   .seg button.on { background:#fff; color:#075e54; font-weight:600; }
-  main { display:grid; grid-template-columns: 1fr 1fr 380px; gap:12px; padding:12px; height:calc(100vh - 56px); }
-  @media (max-width: 1100px) { main { grid-template-columns: 1fr; height:auto; } .chat { height:70vh; } }
-  .col { background:var(--panel); border-radius:10px; display:flex; flex-direction:column; min-height:0; overflow:hidden; border:1px solid var(--line); }
-  .col h2 { margin:0; padding:10px 12px; font-size:14px; border-bottom:1px solid var(--line); }
-  .col h2 small { color:var(--mut); font-weight:400; }
-  .msgs { flex:1; overflow:auto; padding:10px; display:flex; flex-direction:column; gap:6px; background:var(--bg); }
-  .b { max-width:88%; padding:7px 10px; border-radius:8px; white-space:pre-wrap; word-wrap:break-word; }
-  .b.agent { background:var(--bot); align-self:flex-start; }
-  .b.user { background:var(--me); align-self:flex-end; }
-  .btns { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
-  .btns button { border:1px solid var(--acc); color:var(--acc); background:transparent; border-radius:14px; padding:3px 10px; cursor:pointer; }
-  form.send { display:flex; gap:6px; padding:8px; border-top:1px solid var(--line); flex-wrap:wrap; }
-  form.send input[type=text] { flex:1; min-width:120px; padding:8px; border-radius:16px; border:1px solid var(--line); background:var(--panel); color:var(--ink); }
-  button.p { background:var(--acc); color:#fff; border:0; border-radius:16px; padding:8px 14px; cursor:pointer; }
-  .opts { width:100%; color:var(--mut); font-size:12px; display:flex; gap:12px; }
-  .side { overflow:auto; padding:10px; gap:10px; display:flex; flex-direction:column; }
-  .side section { border:1px solid var(--line); border-radius:8px; padding:8px; }
-  .side h3 { margin:0 0 6px; font-size:12px; text-transform:uppercase; color:var(--mut); letter-spacing:.05em; }
-  .row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
-  .row button, .side input[type=number] { padding:4px 8px; border:1px solid var(--line); background:var(--panel); color:var(--ink); border-radius:6px; cursor:pointer; }
-  .side input[type=number], .side input[type=text] { width:80px; cursor:text; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:4px 6px; }
-  table { width:100%; border-collapse:collapse; font-size:12px; }
-  td, th { padding:2px 4px; border-bottom:1px solid var(--line); text-align:left; }
-  .tag { padding:1px 6px; border-radius:8px; font-size:11px; background:var(--line); }
-  .tag.bad { background:var(--warn); color:#fff; }
-  .log { font:11px/1.3 ui-monospace, monospace; max-height:160px; overflow:auto; }
-  .note { color:var(--mut); font-size:12px; }
+  .top input[type=number] { width:70px; border-radius:6px; border:0; padding:4px 6px; }
+  .top small { opacity:.85; }
+
+  main { display:grid; grid-template-columns: minmax(300px,380px) minmax(300px,380px) minmax(320px,1fr); gap:16px; padding:16px; align-items:start; max-width:1500px; margin:0 auto; }
+  .plate { font-weight:600; margin:0 4px 6px; color:var(--mut); font-size:13px; }
+
+  /* ---------- phone ---------- */
+  .phone { height:min(760px, calc(100vh - 110px)); min-height:520px; display:flex; flex-direction:column; background:var(--chat); border-radius:22px; overflow:hidden; border:1px solid var(--line); box-shadow:0 6px 24px #0002; position:relative; }
+  .wa-head { background:var(--head); color:var(--headink); display:flex; align-items:center; gap:10px; padding:8px 12px; }
+  .wa-head .back { font-size:22px; opacity:.9; }
+  .avatar { width:38px; height:38px; border-radius:50%; background:#d9fdd3; display:flex; align-items:center; justify-content:center; font-size:20px; flex:none; }
+  .who { flex:1; min-width:0; line-height:1.2; }
+  .who b { display:flex; align-items:center; gap:4px; font-weight:600; }
+  .verified { display:inline-block; width:14px; height:14px; border-radius:50%; background:#25d366; color:#fff; font-size:9px; text-align:center; line-height:14px; }
+  .who small { opacity:.85; font-size:12px; }
+  .head-icons { letter-spacing:8px; opacity:.9; }
+  .wa-chat { flex:1; overflow-y:auto; padding:10px 10px 6px; display:flex; flex-direction:column; gap:2px; scroll-behavior:smooth;
+    background-image: radial-gradient(var(--dot) 1.2px, transparent 1.4px); background-size:18px 18px; }
+  .daychip { align-self:center; background:var(--in); color:var(--mut); font-size:11.5px; padding:4px 10px; border-radius:8px; margin:6px 0 8px; box-shadow:0 1px 1px #0001; text-transform:uppercase; }
+  .secure { align-self:center; text-align:center; max-width:88%; background:#fff3c4; color:#54450a; font-size:11.5px; padding:6px 10px; border-radius:8px; margin-bottom:8px; }
+  @media (prefers-color-scheme: dark) { .secure { background:#182229; color:#ffd279; } }
+
+  .row { display:flex; flex-direction:column; }
+  .row.in { align-items:flex-start; } .row.out { align-items:flex-end; }
+  .msg { position:relative; max-width:84%; padding:6px 8px 5px 9px; border-radius:8px; box-shadow:0 1px 1px #0002; color:var(--inkb); white-space:pre-wrap; word-wrap:break-word; overflow-wrap:anywhere; margin-top:2px; animation:pop .16s ease-out; }
+  @keyframes pop { from { transform:scale(.96); opacity:0; } to { transform:none; opacity:1; } }
+  .msg.in { background:var(--in); border-top-left-radius:0; }
+  .msg.out { background:var(--out); border-top-right-radius:0; }
+  .msg.first { margin-top:7px; }
+  .msg.in.first::before { content:""; position:absolute; top:0; left:-7px; border:7px solid transparent; border-top-color:var(--in); border-right-color:var(--in); }
+  .msg.out.first::before { content:""; position:absolute; top:0; right:-7px; border:7px solid transparent; border-top-color:var(--out); border-left-color:var(--out); }
+  .msg a { color:var(--link); }
+  .meta { float:right; margin:6px 0 -3px 12px; font-size:11px; color:var(--mut); display:flex; gap:3px; align-items:center; white-space:nowrap; }
+  .ticks { font-size:13px; letter-spacing:-5px; color:var(--mut); margin-right:4px; }
+  .ticks.read { color:var(--tick); }
+  .qrs { display:flex; flex-direction:column; gap:3px; width:min(84%, 300px); margin-top:3px; }
+  .row.in .qrs { align-items:stretch; }
+  .qr { background:var(--in); color:var(--btn); text-align:center; padding:9px 8px; border-radius:8px; cursor:pointer; font-weight:500; box-shadow:0 1px 1px #0002; user-select:none; }
+  .qr:hover { filter:brightness(.97); }
+  .qr.used { opacity:.45; pointer-events:none; }
+
+  .voice { display:flex; align-items:center; gap:9px; min-width:215px; padding:2px 0; }
+  .voice .play { width:34px; height:34px; border-radius:50%; border:0; background:#0000001a; color:var(--inkb); cursor:pointer; font-size:14px; flex:none; }
+  .voice .wave { flex:1; display:flex; align-items:center; gap:2px; height:26px; }
+  .voice .wave i { display:block; width:3px; border-radius:2px; background:var(--mut); opacity:.55; transition:opacity .2s; }
+  .voice.playing .wave i { animation:wv 1s infinite ease-in-out; opacity:.9; background:var(--accent); }
+  @keyframes wv { 50% { transform:scaleY(.45); } }
+  .voice .dur { font-size:11px; color:var(--mut); }
+  .transcript { font-size:12.5px; color:var(--mut); margin-top:2px; padding-top:4px; border-top:1px dashed var(--line); font-style:italic; }
+  .typing { display:flex; gap:4px; padding:11px 12px; }
+  .typing i { width:7px; height:7px; border-radius:50%; background:var(--mut); animation:bounce 1.2s infinite; }
+  .typing i:nth-child(2){ animation-delay:.15s } .typing i:nth-child(3){ animation-delay:.3s }
+  @keyframes bounce { 0%,60%,100% { transform:none; opacity:.5 } 30% { transform:translateY(-4px); opacity:1 } }
+
+  .chips { display:flex; gap:6px; overflow-x:auto; padding:6px 8px; background:var(--chat); scrollbar-width:thin; }
+  .chips.hidden { display:none; }
+  .chip { flex:none; border:1px solid var(--line); background:var(--in); color:var(--inkb); border-radius:999px; padding:4px 10px; cursor:pointer; font:inherit; font-size:12.5px; }
+  .chip:hover { border-color:var(--accent); }
+  .wa-input { display:flex; align-items:center; gap:6px; padding:6px 8px 8px; background:var(--chat); }
+  .wa-input .pill { flex:1; display:flex; align-items:center; gap:8px; background:var(--in); border-radius:999px; padding:0 12px; min-height:42px; }
+  .wa-input input { flex:1; border:0; outline:0; background:transparent; color:var(--inkb); font:inherit; padding:9px 0; min-width:0; }
+  .wa-input .ico { opacity:.55; cursor:default; }
+  .sendbtn { width:42px; height:42px; border-radius:50%; border:0; background:var(--accent); color:#fff; font-size:18px; cursor:pointer; flex:none; }
+  .sendbtn.rec { background:var(--warn); animation:pulse 1.2s infinite; }
+  @keyframes pulse { 50% { box-shadow:0 0 0 8px #d9302533; } }
+  .foot { display:flex; justify-content:space-between; align-items:center; padding:0 12px 8px; background:var(--chat); font-size:11.5px; color:var(--mut); gap:8px; flex-wrap:wrap; }
+  .foot label { cursor:pointer; display:inline-flex; align-items:center; gap:4px; }
+  .toast { position:absolute; left:50%; bottom:78px; transform:translateX(-50%); background:#111b21e6; color:#fff; padding:8px 12px; border-radius:8px; font-size:12.5px; max-width:86%; text-align:center; z-index:5; }
+
+  /* ---------- simulator ---------- */
+  .sim { display:flex; flex-direction:column; gap:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .card h3 { margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--mut); display:flex; justify-content:space-between; align-items:center; }
+  details.card > summary { cursor:pointer; list-style:none; font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--mut); font-weight:600; }
+  details.card[open] > summary { margin-bottom:8px; }
+  .scen { display:grid; grid-template-columns:repeat(auto-fill,minmax(112px,1fr)); gap:6px; max-height:236px; overflow:auto; padding:2px; }
+  .scen button { text-align:left; border:1px solid var(--line); background:transparent; color:var(--ink); border-radius:10px; padding:7px 8px; cursor:pointer; font:inherit; font-size:12.5px; line-height:1.25; }
+  .scen button.sel { border-color:var(--accent); background:#00a88418; }
+  .scen .em { font-size:18px; display:block; }
+  .scenInfo { margin-top:8px; font-size:13px; } .scenInfo .hint { color:var(--mut); margin-top:2px; }
+  .btnrow { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  button.btn { border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:8px; padding:6px 11px; cursor:pointer; font:inherit; }
+  button.btn:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  button.big { width:100%; padding:11px; font-size:15px; border-radius:10px; }
+  .stepper { display:flex; gap:4px; margin:0 0 10px; }
+  .stepper div { flex:1; text-align:center; font-size:10px; color:var(--mut); }
+  .stepper i { display:block; height:5px; border-radius:3px; background:var(--line); margin-bottom:3px; }
+  .stepper .done i { background:var(--accent); opacity:.55; } .stepper .cur i { background:var(--accent); } .stepper .cur { color:var(--ink); font-weight:600; }
+  .nextHint { color:var(--mut); font-size:12.5px; margin-top:8px; }
+  .sw { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; font-size:13px; }
+  .sw input[type=number], .sw input[type=text], #otp { width:84px; border:1px solid var(--line); border-radius:6px; padding:4px 6px; background:var(--card); color:var(--ink); }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  td, th { padding:3px 4px; border-bottom:1px solid var(--line); text-align:left; }
+  .tag { padding:1px 7px; border-radius:999px; font-size:11px; background:var(--line); white-space:nowrap; }
+  .tag.red { background:var(--warn); color:#fff; } .tag.amber { background:#f6c85f; color:#4a3300; }
+  .log { font:11px/1.35 ui-monospace,Menlo,monospace; max-height:170px; overflow:auto; color:var(--mut); }
+  .note { color:var(--mut); font-size:12.5px; }
+
+  main > * { min-width:0; }
+  @media (max-width: 1150px) { main { grid-template-columns:minmax(0,1fr); max-width:520px; width:100%; padding:10px; } .phone { height:640px; } }
 </style>
 </head>
 <body>
-<header>
-  <h1>🍲 CookSmart <small style="font-weight:400">· mock WhatsApp</small></h1>
-  <span>Ordering mode:</span>
-  <span class="seg" id="modeSeg">
-    <button data-m="approve">Approve each order</button>
-    <button data-m="auto">Auto-order within limits</button>
-  </span>
-  <label>limit ₹ <input id="cap" type="number" min="0" style="width:80px"></label>
-  <span id="status" style="margin-left:auto"></span>
-</header>
+<div class="top">
+  <h1>🍲 CookSmart <small>· WhatsApp simulator</small></h1>
+  <div class="mode">
+    <span>Ordering:</span>
+    <span class="seg" id="modeSeg">
+      <button data-m="approve" title="Nothing is bought until you tap approve">Approve each order</button>
+      <button data-m="auto" title="The agent orders by itself within your limit, once you've accepted a menu">Auto-order within limits</button>
+    </span>
+    <label id="capWrap">limit ₹ <input id="cap" type="number" min="0"></label>
+  </div>
+  <span class="grow"></span>
+  <small id="status"></small>
+</div>
+
 <main>
-  <div class="col chat">
-    <h2>👤 Owner chat <small>(you: inventory, gaps, prices, approvals)</small></h2>
-    <div class="msgs" id="ownerMsgs"></div>
-    <form class="send" id="ownerForm"><input type="text" id="ownerIn" placeholder="e.g. 1 and 2 · palak paneer · cream 100 ml · approve" autocomplete="off"><button class="p">Send</button></form>
-  </div>
-  <div class="col chat">
-    <h2>👩‍🍳 Cook chat <small>(Hindi: only what to make)</small></h2>
-    <div class="msgs" id="cookMsgs"></div>
-    <form class="send" id="cookForm">
-      <input type="text" id="cookIn" placeholder="e.g. paneer khatam · 2 टमाटर बचे · gas kharab hai · haan" autocomplete="off"><button class="p">Send</button>
-      <div class="opts"><label><input type="checkbox" id="asVoice" checked> as voice note (simulated)</label>
-      <label><input type="checkbox" id="speak"> speak cook messages (hi-IN)</label></div>
-    </form>
-  </div>
-  <div class="col side">
-    <section><h3>Day cycle (what a scheduler would trigger)</h3>
-      <div class="row">
-        <button data-t="nightly_review">1 · Nightly review</button>
-        <button data-t="cutoff">2 · Reply cutoff (silence)</button>
-        <button data-t="morning">3 · Cook arrives</button>
-        <button data-t="check_orders">Re-check orders</button>
-        <button data-t="end_of_day">4 · End of day</button>
-        <button data-t="close_day">5 · Close day</button>
+  <section>
+    <div class="plate">👤 You · the owner's phone</div>
+    <div class="phone" id="ph-owner">
+      <div class="wa-head"><span class="back">‹</span><div class="avatar">🍲</div>
+        <div class="who"><b>CookSmart <span class="verified">✓</span></b><small data-status>online</small></div><span class="head-icons">⋮</span></div>
+      <div class="wa-chat" data-chat><div class="secure">🔒 Messages are end-to-end encrypted (well, in a real build). Type <b>help</b> to see what I can do.</div><div class="daychip">Today</div></div>
+      <div class="chips" data-chips></div>
+      <form class="wa-input" data-form>
+        <div class="pill"><span class="ico">😊</span><input data-in placeholder="Message" autocomplete="off"><span class="ico">📎</span></div>
+        <button class="sendbtn" data-send type="submit">🎤</button>
+      </form>
+      <div class="foot"><label><input type="checkbox" data-chiptoggle checked> suggestions</label><span>replies here are text</span></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="plate">👩‍🍳 The cook's phone <span style="font-weight:400">(you're playing the cook here)</span></div>
+    <div class="phone" id="ph-cook">
+      <div class="wa-head"><span class="back">‹</span><div class="avatar">🍲</div>
+        <div class="who"><b>CookSmart <span class="verified">✓</span></b><small data-status>online</small></div><span class="head-icons">⋮</span></div>
+      <div class="wa-chat" data-chat><div class="secure">🔒 Hindi voice notes and text. This chat only ever says <b>what to cook</b>.</div><div class="daychip">Today</div></div>
+      <div class="chips" data-chips></div>
+      <form class="wa-input" data-form>
+        <div class="pill"><span class="ico">😊</span><input data-in placeholder="Message (Hindi, Hinglish or English)" autocomplete="off"><span class="ico">📎</span></div>
+        <button class="sendbtn" data-send type="submit">🎤</button>
+      </form>
+      <div class="foot">
+        <label><input type="checkbox" data-voice checked> send as voice note</label>
+        <label><input type="checkbox" data-autoplay> 🔊 speak agent voice notes</label>
+        <label><input type="checkbox" data-chiptoggle checked> suggestions</label>
       </div>
-      <div class="note" id="planInfo"></div>
-    </section>
-    <section><h3>Door (voice handshake)</h3>
-      <div class="row">
-        <button data-door="cook">Rider · cook's voice</button>
-        <button data-door="stranger">Rider · stranger's voice</button>
-        <button data-door="none">Rider · no voice</button>
-      </div>
-      <div class="row" style="margin-top:6px"><input type="text" id="otp" placeholder="OTP"><button id="otpBtn">Enter OTP at door</button></div>
-      <div class="note" id="doorRes"></div>
-    </section>
-    <section><h3>Break things (mock rails)</h3>
-      <div class="row">
+    </div>
+  </section>
+
+  <aside class="sim">
+    <div class="card">
+      <h3>🎬 Scenarios <span class="note" id="scenName"></span></h3>
+      <div class="scen" id="scen"></div>
+      <div class="scenInfo" id="scenInfo"><span class="note">Pick a situation to start from.</span></div>
+      <div class="btnrow"><button class="btn primary" id="scenLoad">Start here</button><button class="btn" id="scenPlay">▶ Watch it play out</button></div>
+    </div>
+
+    <div class="card">
+      <h3>⏭ What happens next <span class="note" id="clockNote"></span></h3>
+      <div class="stepper" id="stepper"></div>
+      <button class="btn primary big" id="nextBtn">…</button>
+      <div class="nextHint" id="nextHint"></div>
+    </div>
+
+    <details class="card">
+      <summary>🧪 Break things (mock rails)</summary>
+      <div class="sw">
         <label><input type="checkbox" data-c="payment_fails"> payment fails</label>
         <label><input type="checkbox" data-c="cancel_after_accept"> store cancels after accepting</label>
         <label><input type="checkbox" data-c="stt_low_confidence"> cook's voice unclear</label>
+        <label>price × <input type="number" step="0.5" min="0.5" data-n="price_factor" style="width:64px"></label>
+        <label>ETA +min <input type="number" min="0" step="30" data-n="eta_delay_min" style="width:72px"></label>
+        <label>out of stock <input type="text" data-oos placeholder="cream,paneer" style="width:120px"></label>
       </div>
-      <div class="row" style="margin-top:6px">
-        <label>price × <input type="number" step="0.1" min="0.5" data-n="price_factor" style="width:60px"></label>
-        <label>ETA +min <input type="number" min="0" data-n="eta_delay_min" style="width:70px"></label>
-        <label>out of stock <input type="text" data-oos placeholder="cream,paneer" style="width:110px"></label>
+    </details>
+
+    <details class="card">
+      <summary>🚪 Door (voice handshake)</summary>
+      <div class="btnrow" style="margin-top:0">
+        <button class="btn" data-door="cook">Rider · cook's voice</button>
+        <button class="btn" data-door="stranger">Rider · stranger</button>
+        <button class="btn" data-door="none">Rider · no voice</button>
       </div>
-    </section>
-    <section><h3>Inventory</h3><div id="inv"></div></section>
-    <section><h3>Orders</h3><div id="orders" class="note">none</div></section>
-    <section><h3>Audit log <span class="note" id="srcs"></span></h3><div class="log" id="audit"></div></section>
-  </div>
+      <div class="sw" style="margin-top:8px"><input id="otp" placeholder="OTP"><button class="btn" id="otpBtn">Enter OTP at door</button></div>
+      <div class="note" id="doorRes" style="margin-top:6px"></div>
+    </details>
+
+    <details class="card" open>
+      <summary>🧊 Kitchen stock</summary>
+      <div id="inv"></div>
+    </details>
+    <details class="card"><summary>🧾 Orders</summary><div id="orders" class="note">none yet</div></details>
+    <details class="card"><summary>📜 What the agent did (audit log)</summary><div class="log" id="audit"></div></details>
+  </aside>
 </main>
+
 <script>
 const HID = 'demo';
-const api = (p, o) => fetch('/api/' + p, o ? { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(o) } : undefined).then(r => r.json());
-const last = { owner: 0, cook: 0 };
-const $ = s => document.querySelector(s);
+const $ = (s, r = document) => r.querySelector(s);
+const api = (p, o) => fetch('/api/' + p, o !== undefined ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(o) } : undefined).then(r => r.json());
+const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmt = s => esc(s).replace(/\*([^*\n]+)\*/g, '<b>$1</b>').replace(/(https?:\/\/[^\s<]+)/g, '<a href="#" onclick="return false">$1</a>');
+const timeOf = ts => new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
-function bubble(box, m, who, onBtn) {
-  const d = document.createElement('div');
-  d.className = 'b ' + m.sender;
-  d.textContent = m.text;
-  if (m.payload && m.payload.buttons && m.sender === 'agent') {
-    const b = document.createElement('div'); b.className = 'btns';
-    m.payload.buttons.forEach(t => { const x = document.createElement('button'); x.textContent = t; x.onclick = () => onBtn(t); b.appendChild(x); });
-    d.appendChild(b);
+const ownerChips = ['help', 'Accept 1', '1 and 2', 'Something else', 'palak paneer', 'rajma chawal', 'cream 100 ml', 'no tomatoes', 'all good',
+  'approve', 'No, hold it', '6 guests tomorrow', 'fasting tomorrow', 'cook is off tomorrow', 'veg only', 'non veg ok', 'jain', 'no dairy', 'family of 5',
+  'tell cook: kam mirch daliye', 'change menu', 'mode auto', 'mode approve', 'cap 300'];
+const cookChips = ['नमस्ते', 'नमस्ते, मैं आ गई', 'आज क्या बनाना है?', 'हाँ', 'नहीं', 'पनीर खत्म', '2 टमाटर बचे', 'पालक खराब हो गई', 'गैस खराब है',
+  'कुकर खराब है', 'समय कम है', 'खाना बन गया', 'कल मैं नहीं आऊंगी', "I'm here", 'no paneer left', 'what do I cook today?'];
+
+/* ---------- phones ---------- */
+class Phone {
+  constructor(kind, root, send) {
+    this.kind = kind; this.root = root; this.sendFn = send;
+    this.chat = $('[data-chat]', root); this.status = $('[data-status]', root);
+    this.input = $('[data-in]', root); this.btn = $('[data-send]', root); this.chips = $('[data-chips]', root);
+    this.lastDir = null; this.lastOut = []; this.rec = null;
+    $('[data-form]', root).onsubmit = e => { e.preventDefault(); this.submit(); };
+    this.input.oninput = () => this.syncBtn();
+    this.btn.onclick = e => { if (!this.input.value.trim()) { e.preventDefault(); this.mic(); } };
+    const toggle = $('[data-chiptoggle]', root);
+    toggle.onchange = () => this.chips.classList.toggle('hidden', !toggle.checked);
+    (kind === 'owner' ? ownerChips : cookChips).forEach(t => {
+      const c = document.createElement('button'); c.type = 'button'; c.className = 'chip'; c.textContent = t;
+      c.onclick = () => this.send(t); this.chips.appendChild(c);
+    });
   }
-  box.appendChild(d); box.scrollTop = box.scrollHeight;
-}
-const sendOwner = t => api(HID + '/owner/message', { text: t }).then(refresh);
-const sendCook = (t, voice) => api(HID + '/cook/message', { text: t, voice }).then(refresh);
-
-async function pull(kind) {
-  const msgs = await api(`${HID}/${kind}/messages?after=${last[kind]}`);
-  const box = $(kind === 'owner' ? '#ownerMsgs' : '#cookMsgs');
-  msgs.forEach(m => {
-    bubble(box, m, kind, kind === 'owner' ? sendOwner : t => sendCook(t, $('#asVoice').checked));
-    last[kind] = m.id;
-    if (kind === 'cook' && m.sender === 'agent' && $('#speak').checked && 'speechSynthesis' in window) {
-      const u = new SpeechSynthesisUtterance(m.text); u.lang = 'hi-IN'; speechSynthesis.speak(u);
+  syncBtn() { this.btn.textContent = this.input.value.trim() ? '➤' : '🎤'; }
+  submit() { const t = this.input.value.trim(); if (t) { this.input.value = ''; this.syncBtn(); this.send(t); } }
+  send(t) { this.sendFn(t); }
+  toast(t) { const d = document.createElement('div'); d.className = 'toast'; d.textContent = t; this.root.appendChild(d); setTimeout(() => d.remove(), 3200); }
+  mic() {
+    if (this.kind === 'owner') return this.toast('In this demo the owner replies by text. Use the cook phone to try voice notes.');
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return this.toast('This browser can\'t record speech. Type your message and send it: it goes as a voice note.');
+    if (this.rec) { this.rec.stop(); return; }
+    const r = new SR(); r.lang = 'hi-IN'; r.interimResults = false; this.rec = r;
+    this.btn.classList.add('rec'); this.input.placeholder = '🎙 Listening… speak in Hindi';
+    r.onresult = e => this.sendFn(e.results[0][0].transcript, true);
+    r.onerror = () => this.toast('Couldn\'t hear anything. Try again or type.');
+    r.onend = () => { this.rec = null; this.btn.classList.remove('rec'); this.input.placeholder = 'Message (Hindi, Hinglish or English)'; };
+    r.start();
+  }
+  clear() {
+    this.chat.querySelectorAll('.row, .daychip + .daychip').forEach(n => n.remove()); this.lastDir = null; this.lastOut = [];
+  }
+  setTyping(on) {
+    this.status.textContent = on ? 'typing…' : 'online';
+    let t = $('.typingrow', this.chat);
+    if (on && !t) {
+      t = document.createElement('div'); t.className = 'row in typingrow';
+      t.innerHTML = '<div class="msg in first"><div class="typing"><i></i><i></i><i></i></div></div>';
+      this.chat.appendChild(t);
+    } else if (!on && t) t.remove();
+    this.chat.scrollTop = this.chat.scrollHeight;
+  }
+  add(m) {
+    const dir = m.sender === 'agent' ? 'in' : 'out';
+    const row = document.createElement('div'); row.className = 'row ' + dir;
+    const bub = document.createElement('div'); bub.className = 'msg ' + dir + (this.lastDir !== dir ? ' first' : '');
+    this.lastDir = dir;
+    const voice = m.payload && m.payload.voice;
+    const text = (voice && dir === 'out') ? m.text.replace(/^🎤\s*/, '') : m.text;
+    if (voice) bub.appendChild(this.voiceEl(m, text, dir));
+    else { const s = document.createElement('span'); s.innerHTML = fmt(text); bub.appendChild(s); }
+    if (voice) { const tr = document.createElement('div'); tr.className = 'transcript'; tr.innerHTML = fmt(text); bub.appendChild(tr); }
+    const meta = document.createElement('span'); meta.className = 'meta';
+    meta.innerHTML = timeOf(m.ts) + (dir === 'out' ? ' <span class="ticks">✓✓</span>' : '');
+    bub.appendChild(meta); row.appendChild(bub);
+    if (dir === 'out') this.lastOut.push($('.ticks', bub));
+    else { this.lastOut.forEach(t => t.classList.add('read')); this.lastOut = []; }
+    const btns = m.payload && m.payload.buttons;
+    if (btns && dir === 'in') {
+      const q = document.createElement('div'); q.className = 'qrs';
+      btns.forEach(b => { const x = document.createElement('div'); x.className = 'qr'; x.textContent = b;
+        x.onclick = () => { q.querySelectorAll('.qr').forEach(n => n.classList.add('used')); this.send(b); }; q.appendChild(x); });
+      row.appendChild(q);
     }
-  });
+    this.chat.appendChild(row); this.chat.scrollTop = this.chat.scrollHeight;
+    if (voice && dir === 'in' && this.autoplay()) this.speak(text, $('.voice', bub));
+  }
+  autoplay() { const a = $('[data-autoplay]', this.root); return a && a.checked; }
+  voiceEl(m, text, dir) {
+    const secs = Math.max(2, Math.round(text.length / 11));
+    const v = document.createElement('div'); v.className = 'voice';
+    const bars = Array.from({ length: 28 }, (_, i) => `<i style="height:${5 + ((m.id * 7 + i * 13) % 17)}px;animation-delay:${(i % 7) * 0.08}s"></i>`).join('');
+    v.innerHTML = `<button class="play" type="button">▶</button><div class="wave">${bars}</div><span class="dur">0:${String(secs).padStart(2, '0')}</span>`;
+    $('.play', v).onclick = () => this.speak(text, v);
+    return v;
+  }
+  speak(text, v) {
+    if (!('speechSynthesis' in window)) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text.replace(/[*_]/g, '')); u.lang = 'hi-IN';
+    u.onstart = () => v.classList.add('playing'); u.onend = u.onerror = () => v.classList.remove('playing');
+    speechSynthesis.speak(u);
+  }
 }
+
+const phones = {
+  owner: new Phone('owner', $('#ph-owner'), t => sendOwner(t)),
+  cook: new Phone('cook', $('#ph-cook'), (t, forceVoice) => sendCook(t, forceVoice)),
+};
+const sendOwner = t => api(HID + '/owner/message', { text: t }).then(refresh);
+const sendCook = (t, forceVoice) => api(HID + '/cook/message', { text: t, voice: forceVoice || $('[data-voice]', phones.cook.root).checked }).then(refresh);
+
+/* ---------- animated message queue (typing indicators, realistic pacing) ---------- */
+const ptr = { owner: 0, cook: 0 };
+const queue = []; let pumping = false;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function pump() {
+  if (pumping) return; pumping = true;
+  while (queue.length) {
+    const { ch, m } = queue.shift(); const ph = phones[ch];
+    const fast = queue.length > 10 ? 0.25 : queue.length > 5 ? 0.5 : 1;
+    if (m.sender === 'agent') { ph.setTyping(true); await sleep(Math.min(450 + m.text.length * 7, 1900) * fast); ph.setTyping(false); }
+    else await sleep(380 * fast);
+    ph.add(m);
+  }
+  pumping = false;
+}
+async function pullMessages() {
+  const [o, c] = await Promise.all([api(`${HID}/owner/messages?after=${ptr.owner}`), api(`${HID}/cook/messages?after=${ptr.cook}`)]);
+  const all = [...o.map(m => ({ ch: 'owner', m })), ...c.map(m => ({ ch: 'cook', m }))].sort((a, b) => a.m.id - b.m.id);
+  all.forEach(x => { ptr[x.ch] = Math.max(ptr[x.ch], x.m.id); queue.push(x); });
+  if (all.length) pump();
+}
+
+/* ---------- simulator panel ---------- */
+const STEPS = ['Review', 'Menu', 'Your call', 'Kitchen', 'Shopping', 'Order', 'Cook', 'Wrap-up'];
+let scenarios = [], selected = null, lastNext = null, busy = false;
 
 function renderState(s) {
   const h = s.household;
   document.querySelectorAll('#modeSeg button').forEach(b => b.classList.toggle('on', b.dataset.m === h.order_mode));
+  $('#capWrap').style.display = h.order_mode === 'auto' ? '' : 'none';
   if (document.activeElement !== $('#cap')) $('#cap').value = h.auto_cap;
-  $('#status').textContent = `planner: ${s.planner} · NLU: ${s.nlu_source} · sim date ${h.sim_date}`;
+  $('#status').textContent = `planner: ${s.planner} · NLU: ${s.nlu_source} · household of ${h.family_size}`;
+  if (s.scenario) { $('#scenName').textContent = s.scenario.emoji + ' ' + s.scenario.title; }
+  // next step + stepper
+  const n = s.next; lastNext = n;
+  $('#nextBtn').textContent = n.label; $('#nextHint').innerHTML = fmt(n.hint);
+  $('#stepper').innerHTML = STEPS.map((t, i) => `<div class="${i + 1 < n.step ? 'done' : i + 1 === n.step ? 'cur' : ''}"><i></i>${t}</div>`).join('');
   const p = s.plan;
-  $('#planInfo').textContent = p ? `Plan for ${p.day}: ${p.state}${p.chosen.length ? ' · ' + p.chosen.join(', ') : ''}${p.chosen.length && !p.reviewed ? ' (not reviewed)' : ''}` : 'No plan yet.';
-  $('#inv').innerHTML = '<table><tr><th>item</th><th>qty</th><th>expires</th><th></th></tr>' + s.inventory.filter(i => i.qty > 0 || i.confidence).map(i =>
-    `<tr><td>${i.name}</td><td>${+i.qty.toFixed(1)} ${i.unit}</td><td>${i.expires_on || '–'}${i.days_left !== null && i.days_left <= 1 ? ' ⚠️' : ''}</td><td>${i.spoiled ? '<span class="tag bad">spoiled</span>' : (i.confidence === 'uncertain' || i.doubtful) ? '<span class="tag bad">unsure</span>' : ''}</td></tr>`).join('') + '</table>';
-  $('#orders').innerHTML = s.orders.length ? s.orders.map(o => `#${o.id} ${o.store} ₹${o.total} <span class="tag ${o.status === 'accepted' || o.status === 'delivered' ? '' : 'bad'}">${o.status}</span> · ${o.authorization}`).join('<br>') : 'none';
-  $('#audit').innerHTML = s.audit.map(a => `${a.ts.slice(11, 19)} ${a.event} ${JSON.stringify(a.detail).slice(0, 110)}`).join('<br>');
+  $('#clockNote').textContent = p ? `${p.state}${p.chosen.length && !p.reviewed ? ' · unreviewed' : ''}` : 'no plan yet';
+  // inventory
+  const rows = s.inventory.filter(i => i.qty > 0).map(i => {
+    let chip = '';
+    if (i.spoiled) chip = '<span class="tag red">spoiled</span>';
+    else if (i.days_left !== null && i.days_left <= 0) chip = '<span class="tag red">use by tomorrow</span>';
+    else if (i.days_left !== null && i.days_left <= 2) chip = `<span class="tag amber">${i.days_left + 1}d left</span>`;
+    else if (i.expires_on) chip = `<span class="tag">${i.expires_on.slice(5)}</span>`;
+    const unsure = (i.confidence === 'uncertain' || i.doubtful) ? ' <span class="tag red">unsure</span>' : '';
+    return `<tr><td>${i.name}</td><td>${+i.qty.toFixed(1)} ${i.unit}</td><td>${chip}${unsure}</td></tr>`;
+  });
+  $('#inv').innerHTML = rows.length ? '<table>' + rows.join('') + '</table>' : '<span class="note">The kitchen is empty.</span>';
+  $('#orders').innerHTML = s.orders.length ? s.orders.map(o => `#${o.id} <b>${o.store}</b> ₹${o.total} <span class="tag ${['accepted', 'delivered'].includes(o.status) ? '' : 'red'}">${o.status}</span> · ${o.authorization}`).join('<br>') : 'none yet';
+  $('#audit').innerHTML = s.audit.map(a => `${a.ts.slice(11, 19)} <b>${a.event}</b> ${esc(JSON.stringify(a.detail).slice(0, 120))}`).join('<br>');
   const c = s.controls;
   document.querySelectorAll('[data-c]').forEach(e => { if (document.activeElement !== e) e.checked = !!c[e.dataset.c]; });
   document.querySelectorAll('[data-n]').forEach(e => { if (document.activeElement !== e) e.value = c[e.dataset.n]; });
@@ -157,31 +398,56 @@ function renderState(s) {
 }
 
 async function refresh() {
-  const s = await api(HID + '/owner/state');
-  renderState(s);
-  await pull('owner'); await pull('cook');
+  if (busy) return; busy = true;
+  try { renderState(await api(HID + '/owner/state')); await pullMessages(); } finally { busy = false; }
 }
 
+function showScenario(id) {
+  selected = scenarios.find(s => s.id === id);
+  document.querySelectorAll('#scen button').forEach(b => b.classList.toggle('sel', b.dataset.id === id));
+  $('#scenInfo').innerHTML = selected ? `<b>${selected.emoji} ${selected.title}</b><div>${fmt(selected.blurb)}</div><div class="hint">💡 ${fmt(selected.hint)}</div>` : '';
+}
+async function loadScenario(play) {
+  if (!selected) return;
+  await api(`${HID}/scenario/${selected.id}?play=${play}`, {});
+  Object.values(phones).forEach(p => p.clear()); queue.length = 0; ptr.owner = ptr.cook = 0;
+  $('#doorRes').textContent = '';
+  busy = false; await refresh();
+}
+
+/* ---------- wiring ---------- */
 document.querySelectorAll('#modeSeg button').forEach(b => b.onclick = () => api(HID + '/settings', { order_mode: b.dataset.m }).then(refresh));
 $('#cap').onchange = e => api(HID + '/settings', { auto_cap: +e.target.value }).then(refresh);
-document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => api(`${HID}/trigger/${b.dataset.t}`, {}).then(refresh));
-document.querySelectorAll('[data-door]').forEach(b => b.onclick = async () => {
-  const r = await api(HID + '/door/arrive', { voice: b.dataset.door });
-  $('#doorRes').textContent = r.released ? `Released via ${r.via}.` : (r.otp_required ? 'Voice check failed: OTP sent to owner chat. Not released.' : r.reason);
+$('#nextBtn').onclick = async () => {
+  const a = lastNext && lastNext.action; if (!a) return;
+  if (a.kind === 'trigger') await api(`${HID}/trigger/${a.name}`, {});
+  else if (a.kind === 'door') await doorArrive(a.voice);
   refresh();
-});
+};
+async function doorArrive(voice) {
+  const r = await api(HID + '/door/arrive', { voice });
+  $('#doorRes').textContent = r.released ? `Released via ${r.via}.` : (r.otp_required ? 'Voice check failed: OTP sent to the owner chat. Not released.' : (r.reason || ''));
+}
+document.querySelectorAll('[data-door]').forEach(b => b.onclick = async () => { await doorArrive(b.dataset.door); refresh(); });
 $('#otpBtn').onclick = async () => {
   const r = await api(HID + '/door/otp', { code: $('#otp').value });
-  $('#doorRes').textContent = r.released ? 'Released via OTP.' : ('Not released: ' + r.reason); $('#otp').value = ''; refresh();
+  $('#doorRes').textContent = r.released ? 'Released via OTP.' : 'Not released: ' + (r.reason || ''); $('#otp').value = ''; refresh();
 };
 const putControls = o => api('mock/controls', o).then(refresh);
 document.querySelectorAll('[data-c]').forEach(e => e.onchange = () => putControls({ [e.dataset.c]: e.checked }));
 document.querySelectorAll('[data-n]').forEach(e => e.onchange = () => putControls({ [e.dataset.n]: +e.value }));
 $('[data-oos]').onchange = e => putControls({ out_of_stock: e.target.value.split(',').map(x => x.trim()).filter(Boolean) });
-$('#ownerForm').onsubmit = e => { e.preventDefault(); const t = $('#ownerIn').value.trim(); if (t) { $('#ownerIn').value = ''; sendOwner(t); } };
-$('#cookForm').onsubmit = e => { e.preventDefault(); const t = $('#cookIn').value.trim(); if (t) { $('#cookIn').value = ''; sendCook(t, $('#asVoice').checked); } };
+$('#scenLoad').onclick = () => loadScenario(false);
+$('#scenPlay').onclick = () => loadScenario(true);
 
-api('households', { id: HID }).then(refresh).then(() => setInterval(refresh, 1500));
+(async function init() {
+  await api('households', { id: HID });
+  scenarios = await api('scenarios');
+  $('#scen').innerHTML = scenarios.map(s => `<button data-id="${s.id}"><span class="em">${s.emoji}</span>${s.title}</button>`).join('');
+  document.querySelectorAll('#scen button').forEach(b => b.onclick = () => showScenario(b.dataset.id));
+  showScenario('classic');
+  await refresh(); setInterval(refresh, 1500);
+})();
 </script>
 </body>
 </html>

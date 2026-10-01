@@ -10,35 +10,57 @@ flow runs locally with no accounts. Real providers can be swapped in later witho
 ## Run it
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python -m cooksmart            # http://127.0.0.1:8000  (two-pane mock WhatsApp UI)
-pytest                         # 43 tests, fully offline
+python -m cooksmart            # open http://127.0.0.1:8000
+python -m pytest               # 128 tests, fully offline
 ```
 
-Optional: `cp .env.example .env` and add `ANTHROPIC_API_KEY` so Claude plans the menu and parses the
-cook's messages. Without a key, a built-in heuristic planner and a rule-based Hindi/Hinglish parser are used.
+Optional: `cp .env.example .env` and add `ANTHROPIC_API_KEY` so Claude plans menus and parses the cook's
+messages. Without a key, a built-in heuristic planner and a rule-based Hindi/Hinglish/English parser are used.
 
-## Try it (60 seconds)
+## The simulator
 
-1. Click **Nightly review**. The agent proposes dishes that use the tomatoes and spinach about to spoil.
-2. Reply `palak paneer`. Cream is missing, so it looks for an order.
-3. Flip **Ordering mode** at the top:
-   * **Approve each order**: it asks, and nothing is bought until you reply `approve`.
-   * **Auto-order within limits**: it orders by itself if you accepted the menu and the total is under your limit.
-4. Click **Cook arrives**. The cook gets a Hindi brief, including what to start with if groceries are late.
-5. Use the **Door** buttons. The cook's voice releases the groceries; a stranger's voice triggers an OTP to you.
-6. In the cook chat try `paneer khatam` (it reads back and waits for `haan`), `gas kharab hai`, or tick
-   **cook's voice unclear**. Then **End of day** and **Close day**.
-7. The **Break things** panel simulates payment failure, cancellation after acceptance, out of stock,
-   overpriced offers and late delivery.
+Two WhatsApp-style phones (owner on the left, **you playing the cook** in the middle) and a control room.
+Agent messages arrive with typing indicators, ticks turn blue when answered, the cook's messages are Hindi
+voice notes (tap ▶ to hear them in your browser; tick "speak agent voice notes" to auto-play), and
+interactive buttons appear under messages like WhatsApp's quick replies. In Chrome the cook's 🎤 button
+records real Hindi speech; elsewhere type and it is sent as a voice note.
+
+* **Scenarios** (21): spoilage crunch, stale fridge, guests, Jain, Navratri fasting, non-veg, light food,
+  empty pantry, cook on leave, gas runs out, pressure cooker breaks, spinach goes bad, you don't reply,
+  payment declined, store cancels, out of stock, overpriced, late delivery, unclear voice, a stranger at the
+  door... Press **Start here** to begin in that situation or **Watch it play out** for a scripted run.
+* **What happens next** is a guided button plus a stepper, so you never wonder what to press.
+* **Ordering mode** toggle: *Approve each order* or *Auto-order within limits*.
+* **Break things**, **Door**, live **kitchen stock**, **orders** and an **audit log** of every decision.
+
+## Things to try
+
+Owner chat: `1 and 2` · `palak paneer and roti` · `cream 100 ml` · `no tomatoes` · `all good` ·
+`6 guests tomorrow` · `fasting tomorrow` · `cook is off tomorrow` · `jain` · `non veg ok` · `no dairy` ·
+`family of 5` · `tell cook: kam mirch daliye` · `change menu` · `mode auto` · `cap 300` · `help`
+
+Cook chat (Hindi, Hinglish or English): `namaste` · `aa gayi` / `I'm here` · `aaj kya banana hai?` ·
+`paneer khatam` / `no paneer left` · `2 tamatar bache` · `palak kharab ho gayi` · `gas kharab hai` ·
+`cooker kharab hai` · `samay kam hai` · `khana ban gaya` · `kal main nahi aaungi` · `haan` / `nahi`
+
+Anything the cook says that changes stock is read back in Hindi first and applied only after she confirms.
+
+## Recipes and conditions
+
+48 recipes (sabzi, dal, rice/roti, one-pot, breakfast, no-cook sides, fasting dishes, egg and chicken),
+composed into real meals such as *Palak Paneer + Roti* or *Dal Tadka + Aloo Gobi + Jeera Rice*. Planning
+honours: use-by dates, recent repeats, vegetarian / eggetarian / non-veg / Jain, fasting (vrat), no dairy,
+light food, number of people and guests (quantities scale), broken stove or pressure cooker, short on time,
+and a cook who is off. Add recipes in `cooksmart/recipes.py` and scenarios in `cooksmart/scenarios.py`.
 
 ## How it maps to the spec
 
 | Spec | Where |
 |---|---|
 | S1 nightly review; unsure or stale stock is never planned around | `agent.nightly_review`, `inventory.py` |
-| S2 menu proposal weighted to spoilage, repeat penalty, trade-offs explained | `planner.py` (Claude or heuristic) |
+| S2 menu proposal weighted to spoilage, repeat penalty, trade-offs explained, diet and guests | `planner.py` (Claude or heuristic) |
 | S3 review; reject loop (2 tries, then offers ordering); silence proceeds without ordering | `agent.handle_owner`, `_reject`, `cutoff` |
 | S4 feasibility; partial quantity counts as missing | `inventory.gaps`, `agent._feasibility` |
 | S5 gap resolution; price/ETA comparison; out-of-stock or overpriced; never substitutes | `agent._gap_resolution` |

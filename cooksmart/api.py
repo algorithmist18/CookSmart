@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from . import inventory as inv
-from . import repo
+from . import repo, scenarios
 from .agent import Agent
 from .channels import MockChannel
 from .config import Settings, get_settings
@@ -63,6 +63,37 @@ class OtpBody(BaseModel):
     code: str
 
 
+def next_step(plan: dict | None, orders: list[dict]) -> dict:
+    """The guided 'what happens next' card plus the S1-S8 stepper position."""
+    open_order = any(o["status"] == "accepted" for o in orders)
+    trig = lambda name: {"kind": "trigger", "name": name}
+    if not plan or plan["state"] == "closed":
+        return dict(step=0, label="🌙 Run the nightly review", action=trig("nightly_review"),
+                    hint="After dinner the agent checks the kitchen and proposes tomorrow's meal.")
+    st = plan["state"]
+    if st == "review":
+        return dict(step=3, label="⏰ Owner stays silent (cutoff)", action=trig("cutoff"),
+                    hint="Reply in the owner chat to choose a menu, or press this to see what happens when you don't.")
+    if st == "approval":
+        return dict(step=5, label="⏰ No approval in time (cutoff)", action=trig("cutoff"),
+                    hint="Reply *approve* in the owner chat, or press this to see the agent hold the order.")
+    if st == "held":
+        return dict(step=5, label="☀️ Morning: cook arrives", action=trig("morning"),
+                    hint="The order is on hold. Approve it in the chat, or let the morning come and see the fallback.")
+    if st in ("ready", "ordered"):
+        label = "☀️ Morning: cook arrives"
+        hint = "The agent re-checks the order, then briefs the cook. The cook can also just message *aa gayi*."
+        return dict(step=6 if st == "ordered" else 4, label=label, action=trig("morning"), hint=hint)
+    if st == "briefed":
+        if open_order:
+            return dict(step=7, label="🛵 Rider arrives (cook's voice)", action={"kind": "door", "voice": "cook"},
+                        hint="Try the stranger's voice from the Door panel to see the OTP fallback.")
+        return dict(step=7, label="🌙 Evening: ask the cook what was used", action=trig("end_of_day"),
+                    hint="Or the cook can message *khana ban gaya*.")
+    return dict(step=8, label="✅ Close the day", action=trig("close_day"),
+                hint="Answer the agent in the cook chat first (e.g. *paneer khatam*, then *haan*).")
+
+
 def create_app(settings: Settings | None = None, db: DB | None = None) -> FastAPI:
     settings = settings or get_settings()
     db = db or DB(settings.db_path)
@@ -70,6 +101,7 @@ def create_app(settings: Settings | None = None, db: DB | None = None) -> FastAP
     agent = build_agent(settings, db, controls)
     app = FastAPI(title="CookSmart")
     app.state.agent, app.state.db, app.state.controls = agent, db, controls
+    current: dict[str, str] = {}
 
     def need(hid: str) -> dict:
         h = repo.get_household(db, hid)
@@ -107,7 +139,9 @@ def create_app(settings: Settings | None = None, db: DB | None = None) -> FastAP
         return {"household": h, "inventory": items, "plan": plan, "orders": repo.list_orders(db, hid),
                 "audit": repo.list_audit(db, hid), "memory": repo.list_memory(db, hid),
                 "controls": controls.as_dict(), "nlu_source": agent.nlu.last_source,
-                "planner": "claude" if agent.planner.claude else "heuristic"}
+                "planner": agent.planner.last_source if agent.planner.claude else "heuristic",
+                "next": next_step(plan, repo.list_orders(db, hid)),
+                "scenario": ({k: v for k, v in scenarios.BY_ID[current[hid]].__dict__.items() if k in ("id", "title", "emoji", "blurb", "hint")} if hid in current else None)}
 
     @app.get("/api/{hid}/owner/messages")
     def owner_messages(hid: str, after: int = 0):
@@ -137,6 +171,22 @@ def create_app(settings: Settings | None = None, db: DB | None = None) -> FastAP
         need(hid)
         agent.set_settings(hid, body.order_mode, body.auto_cap)
         return {"ok": True}
+
+    # ---- scenarios
+    @app.get("/api/scenarios")
+    def scenario_list():
+        return scenarios.catalog()
+
+    @app.post("/api/{hid}/scenario/{sid}")
+    def load_scenario(hid: str, sid: str, play: bool = False):
+        need(hid)
+        if sid not in scenarios.BY_ID:
+            raise HTTPException(404, "unknown scenario")
+        sc = scenarios.load(db, controls, hid, sid)
+        current[hid] = sid
+        if play:
+            scenarios.play(agent, db, controls, hid, sc.script)
+        return {"ok": True, "reset": True, "played": play}
 
     # ---- triggers: what a scheduler (cron/Celery) calls in production
     @app.post("/api/{hid}/trigger/{name}")

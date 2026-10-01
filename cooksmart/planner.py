@@ -1,6 +1,7 @@
 """Menu planning (S2). Claude proposes; deterministic code validates and computes gaps.
 
-Claude may only pick dishes from the recipe book (by id), so ingredient lists and quantities are never
+A "menu" is a small meal: a main plus companions (e.g. Palak Paneer + Roti, or Dal Tadka + Aloo Gobi + Rice).
+Claude may only choose dishes from the recipe book (by id), so ingredient lists and quantities are never
 hallucinated. A heuristic planner is the fallback and the offline mode.
 """
 from __future__ import annotations
@@ -10,7 +11,9 @@ from dataclasses import dataclass, field
 
 from . import inventory as inv
 from .nlu import find_items, norm, tokens
-from .recipes import ITEMS, RECIPES, fmt_qty
+from .recipes import DAIRY, ITEMS, JAIN_BANNED, RECIPES, fmt_qty
+
+LIGHT_WORDS = {"light", "lighter", "halka", "halki", "healthy", "healthier", "diet"}
 
 
 @dataclass
@@ -18,16 +21,25 @@ class PlanContext:
     cook_day: str
     stock: dict[str, dict]                      # confirmed, non-spoiled: name -> {qty, unit, days_left}
     recent_meals: list[dict] = field(default_factory=list)   # {day, dish_id, dish}
-    preferences: dict = field(default_factory=dict)
-    constraints: list[str] = field(default_factory=list)     # e.g. stove_broken, time_short (today)
+    preferences: dict = field(default_factory=dict)          # diet, lactose_free, likes, dislikes
+    flags: dict = field(default_factory=dict)                # per-day: guests, fasting, light, cook_off, scale
+    constraints: list[str] = field(default_factory=list)     # stove_broken | cooker_broken | time_short
     memory: list[dict] = field(default_factory=list)         # long-term notes
     feedback: list[str] = field(default_factory=list)        # owner's "something else" input
-    exclude_ids: set[str] = field(default_factory=set)
+    exclude_ids: set[str] = field(default_factory=set)       # mains the owner already passed on
+
+    @property
+    def scale(self) -> float:
+        return float(self.flags.get("scale", 1.0))
+
+    @property
+    def light(self) -> bool:
+        return bool(self.flags.get("light")) or any(LIGHT_WORDS & set(tokens(f)) for f in self.feedback)
 
 
 @dataclass
 class Proposal:
-    recipe_id: str
+    recipe_ids: list[str]
     name: str
     reason: str
     feasible: bool
@@ -45,6 +57,7 @@ class Proposals:
     source: str
 
 
+# ---------------------------------------------------------------- rules
 def _excluded_items(ctx: PlanContext) -> set[str]:
     out = {norm(i) for i in ctx.preferences.get("dislikes", [])}
     for fb in ctx.feedback:
@@ -54,15 +67,32 @@ def _excluded_items(ctx: PlanContext) -> set[str]:
     return out
 
 
-def _violates(rid: str, ctx: PlanContext) -> bool:
+def allowed(rid: str, ctx: PlanContext) -> bool:
+    """Hard filters: diet, fasting, allergies, broken appliances, time, cook off."""
     r = RECIPES[rid]
-    if rid in ctx.exclude_ids:
-        return True
+    needs = set(r["needs"])
+    diet = ctx.preferences.get("diet", "vegetarian")
+    if r["diet"] == "nonveg" and diet != "nonveg":
+        return False
+    if r["diet"] == "egg" and diet not in ("nonveg", "eggetarian"):
+        return False
+    if diet == "jain" and needs & JAIN_BANNED:
+        return False
+    if ctx.flags.get("fasting") and "vrat" not in r["tags"]:
+        return False
+    if ctx.preferences.get("lactose_free") and needs & DAIRY:
+        return False
+    if ctx.flags.get("cook_off") and r["tools"]:
+        return False
     if "stove_broken" in ctx.constraints and r["stove"]:
-        return True
-    if "time_short" in ctx.constraints and r["prep"] > 25:
-        return True
-    return bool(_excluded_items(ctx) & set(r["needs"]))
+        return False
+    if "cooker_broken" in ctx.constraints and "cooker" in r["tools"]:
+        return False
+    if "time_short" in ctx.constraints and r["prep"] > 30:
+        return False
+    if ctx.light and "heavy" in r["tags"]:
+        return False
+    return not (_excluded_items(ctx) & needs)
 
 
 def _urgency_weight(days_left: int | None) -> float:
@@ -81,56 +111,137 @@ def _repeat_days(rid: str, ctx: PlanContext) -> int | None:
     return best
 
 
-def enrich(rid: str, ctx: PlanContext, reason: str | None = None) -> Proposal:
-    r = RECIPES[rid]
-    gaps = inv.gaps(inv.needs_for([rid]), ctx.stock)
-    used_urgent = [i for i in r["needs"] if i in ctx.stock and ctx.stock[i]["days_left"] is not None
-                   and ctx.stock[i]["days_left"] <= 2 and ctx.stock[i]["qty"] >= r["needs"][i][0]]
-    if reason is None:
-        if used_urgent:
-            when = {ctx.stock[i]["days_left"] for i in used_urgent}
-            soon = "tomorrow" if min(when) <= 1 else "within 2 days"
-            reason = f"Uses {', '.join(used_urgent)} (expiring {soon})."
+def _needs(ids: list[str], ctx: PlanContext) -> dict[str, dict]:
+    return inv.needs_for(ids, ctx.scale)
+
+
+def _use_by(ctx: PlanContext, item: str) -> str:
+    left = ctx.stock[item]["days_left"]
+    day = dt.date.fromisoformat(ctx.cook_day) + dt.timedelta(days=left)
+    return day.strftime("%a")
+
+
+def menu_name(ids: list[str]) -> str:
+    return " + ".join(RECIPES[i]["name"] for i in ids)
+
+
+def enrich(ids: list[str], ctx: PlanContext, reason: str | None = None) -> Proposal:
+    needs = _needs(ids, ctx)
+    gaps = inv.gaps(needs, ctx.stock)
+    urgent = [i for i in needs if i in ctx.stock and ctx.stock[i]["days_left"] is not None
+              and ctx.stock[i]["days_left"] <= 2 and ctx.stock[i]["qty"] >= needs[i]["qty"]]
+    if not reason:
+        if urgent:
+            reason = "Uses up " + ", ".join(f"{i} (use by {_use_by(ctx, i)})" for i in urgent) + "."
         else:
             reason = "Uses what you already have."
-    return Proposal(rid, r["name"], reason, not gaps, gaps, _repeat_days(rid, ctx))
+        if ctx.scale != 1.0:
+            reason += f" Scaled for {ctx.scale * 4:g} people."
+    return Proposal(list(ids), menu_name(ids), reason, not gaps, gaps, _repeat_days(ids[0], ctx))
+
+
+# ---------------------------------------------------------------- heuristic
+def _no_heat(ctx: PlanContext) -> bool:
+    """Nobody is cooking, or there is no way to: only no-cook dishes are possible."""
+    return bool(ctx.flags.get("cook_off")) or "stove_broken" in ctx.constraints
+
+
+def _mainable(ctx: PlanContext) -> set[str]:
+    if _no_heat(ctx):
+        return {"side", "breakfast"}
+    if ctx.flags.get("fasting"):
+        return {"vrat", "sabzi", "side"}
+    return {"sabzi", "dal", "one_pot", "breakfast"}
+
+
+def _pair_courses(main_course: str, ctx: PlanContext) -> list[tuple[str, bool]]:
+    """Companion courses to try after the main: (course, required)."""
+    if _no_heat(ctx) or ctx.flags.get("fasting"):
+        return [("side", False)]
+    return {"sabzi": [("carb", True), ("dal", False)], "dal": [("carb", True), ("sabzi", False)],
+            "one_pot": [("side", False)], "breakfast": []}.get(main_course, [])
+
+
+def _urgency_of(ids: list[str], ctx: PlanContext, skip: set[str] = frozenset()) -> float:
+    needs = _needs(ids, ctx)
+    return sum(_urgency_weight(ctx.stock[i]["days_left"]) for i, n in needs.items()
+               if i in ctx.stock and i not in skip and ctx.stock[i]["qty"] >= n["qty"])
+
+
+def _build_menu(main: str, ctx: PlanContext) -> list[str] | None:
+    gaps = inv.gaps(_needs([main], ctx), ctx.stock)
+    if len(gaps) > 2:
+        return None
+    ids = [main]
+    # remaining stock after the main, so companions must be fully makeable from what is left
+    left = {k: dict(v) for k, v in ctx.stock.items()}
+    for item, n in _needs([main], ctx).items():
+        if item in left:
+            left[item]["qty"] = max(0.0, left[item]["qty"] - n["qty"])
+    for course, required in _pair_courses(RECIPES[main]["course"], ctx):
+        best = None
+        for rid, r in RECIPES.items():
+            if r["course"] != course or rid in ids or not allowed(rid, ctx):
+                continue
+            if inv.gaps(_needs([rid], ctx), left):
+                continue
+            gain = _urgency_of([rid], ctx, skip={i for x in ids for i in RECIPES[x]["needs"]})
+            key = (-gain, 0 if rid in ("roti",) else 1, rid)
+            if best is None or key < best[0]:
+                best = (key, rid, gain)
+        if best and (required or best[2] > 0) and len(ids) < 3:
+            ids.append(best[1])
+            for item, n in _needs([best[1]], ctx).items():
+                if item in left:
+                    left[item]["qty"] = max(0.0, left[item]["qty"] - n["qty"])
+    return ids
 
 
 def heuristic_propose(ctx: PlanContext, n: int = 3) -> Proposals:
-    """Greedy selection by *marginal* spoilage coverage, so the set of options together uses up as much
-    of what is about to spoil as possible (not three dishes that all use the same tomatoes)."""
+    """Greedy selection by *marginal* spoilage coverage, so the options together use up as much of what is
+    about to spoil as possible (not three menus that all use the same tomatoes)."""
     likes = {norm(i) for i in ctx.preferences.get("likes", [])}
     avoid = {m["note"] for m in ctx.memory if m["kind"] == "avoid_dish"}
     recent_quick = any(m["kind"] == "constraint" and "time" in m["note"] for m in ctx.memory)
+    mainable = _mainable(ctx)
     cands = []
     for rid, r in RECIPES.items():
-        if _violates(rid, ctx):
+        if r["course"] not in mainable or rid in ctx.exclude_ids or not allowed(rid, ctx):
             continue
-        gaps = inv.gaps(inv.needs_for([rid]), ctx.stock)
-        if len(gaps) > 2:
+        ids = _build_menu(rid, ctx)
+        if not ids:
             continue
-        uses = {i: _urgency_weight(ctx.stock[i]["days_left"]) for i, (q, _) in r["needs"].items()
-                if i in ctx.stock and ctx.stock[i]["qty"] >= q}
+        gaps = inv.gaps(_needs(ids, ctx), ctx.stock)
+        uses = {i: _urgency_weight(ctx.stock[i]["days_left"]) for i, nd in _needs(ids, ctx).items()
+                if i in ctx.stock and ctx.stock[i]["qty"] >= nd["qty"]}
         rep = _repeat_days(rid, ctx)
         fixed = -len(gaps) * 5
         fixed -= 4 if rep is not None and rep <= 3 else 2 if rep is not None and rep <= 7 else 0
         fixed += 1 if likes & set(r["needs"]) else 0
         fixed += 1 if recent_quick and r["prep"] <= 30 else 0
+        fixed += 2 if ctx.light and "light" in r["tags"] else 0
         fixed -= 6 if rid in avoid else 0
-        cands.append((rid, not gaps, uses, fixed))
+        fixed += 0.3 * (len(ids) - 1)          # a fuller meal beats a lone dish, all else equal
+        cands.append((ids, not gaps, uses, fixed))
 
-    picked: list[str] = []
+    picked: list[list[str]] = []
     covered: set[str] = set()
     while cands and len(picked) < n:
+        # never offer the same set of dishes twice, and prefer variety between the options
+        cands = [c for c in cands if all(set(c[0]) != set(p) for p in picked)]
+        if not cands:
+            break
+
         def gain(c):
-            rid, feasible, uses, fixed = c
+            ids, feasible, uses, fixed = c
             urgency = sum(w * (1.0 if i not in covered else 0.15) for i, w in uses.items())
-            return (int(feasible), urgency * 2 + fixed, rid)
+            overlap = sum(1 for d in ids if RECIPES[d]["course"] != "carb" and any(d in p for p in picked))
+            return (int(feasible), urgency * 2 + fixed - 3 * overlap, ids[0])
         best = max(cands, key=gain)
         cands.remove(best)
         picked.append(best[0])
         covered |= {i for i, w in best[2].items() if w > 0}
-    picks = [enrich(rid, ctx) for rid in picked]
+    picks = [enrich(ids, ctx) for ids in picked]
     return Proposals(picks, tradeoffs(picks, ctx), "heuristic")
 
 
@@ -138,38 +249,44 @@ def tradeoffs(picks: list[Proposal], ctx: PlanContext) -> list[str]:
     notes = []
     for p in picks:
         if p.repeat_days_ago is not None and p.repeat_days_ago <= 7:
-            notes.append(f"{p.name} was served {p.repeat_days_ago} day(s) ago; I allowed the repeat because "
-                         f"it uses food that would otherwise spoil." if "expiring" in p.reason else
-                         f"{p.name} was served {p.repeat_days_ago} day(s) ago (repeat).")
-    covered = {i for p in picks for i in RECIPES[p.recipe_id]["needs"]}
+            main = RECIPES[p.recipe_ids[0]]["name"]
+            notes.append(f"{main} was served {p.repeat_days_ago} day(s) ago; I allowed the repeat because it uses "
+                         "food that would otherwise spoil." if "Uses up" in p.reason else
+                         f"{main} was served {p.repeat_days_ago} day(s) ago (repeat).")
+    covered = {i for p in picks for i in _needs(p.recipe_ids, ctx)}
     for name, s in ctx.stock.items():
         if s["days_left"] is not None and s["days_left"] <= 1 and name not in covered:
-            notes.append(f"{name} expires tomorrow but no option uses it; tell me if you want a dish built around it.")
+            notes.append(f"{name} is nearly out of date but no option uses it; tell me if you want a dish built "
+                         "around it.")
     return notes
 
 
-# ---------- Claude ----------
+# ---------------------------------------------------------------- Claude
 PROPOSE_TOOL = {
     "name": "propose_menu",
-    "description": "Pick 2-3 dishes from the recipe book for tomorrow.",
+    "description": "Propose 2-3 alternative meals for tomorrow. Each meal is 1-3 dishes from the recipe book.",
     "input_schema": {
         "type": "object",
         "properties": {
-            "dishes": {"type": "array", "minItems": 1, "maxItems": 3, "items": {
+            "menus": {"type": "array", "minItems": 1, "maxItems": 3, "items": {
                 "type": "object",
-                "properties": {"recipe_id": {"type": "string", "enum": sorted(RECIPES)},
-                               "reason": {"type": "string", "description": "One sentence, plain English."}},
-                "required": ["recipe_id", "reason"]}},
+                "properties": {
+                    "dish_ids": {"type": "array", "minItems": 1, "maxItems": 3,
+                                 "items": {"type": "string", "enum": sorted(RECIPES)},
+                                 "description": "Main dish first, then companions (e.g. roti, dal)."},
+                    "reason": {"type": "string", "description": "One friendly sentence."}},
+                "required": ["dish_ids", "reason"]}},
         },
-        "required": ["dishes"],
+        "required": ["menus"],
     },
 }
 
 SYSTEM = """You plan tomorrow's home-cooked meal for an Indian household.
-Priorities, in order: (1) use ingredients closest to spoiling, (2) do not repeat a recent dish unless it is
-needed to avoid waste, (3) honour dislikes, diet and the owner's feedback, (4) tasty and healthy.
-Only choose dishes from the recipe book given. Prefer dishes that are fully makeable from the stock. Respect
-every constraint (e.g. broken stove => no stove dishes). Never invent ingredients."""
+Priorities, in order: (1) use ingredients closest to spoiling, (2) do not repeat a recent dish unless it is needed to
+avoid waste, (3) honour diet, fasting, guests, dislikes and the owner's feedback, (4) tasty, balanced and healthy
+(e.g. a sabzi or dal with roti or rice). Offer 2-3 meals that differ from each other. Only choose dishes from the
+recipe book. Prefer meals fully makeable from the stock. Respect every constraint (broken stove => no stove dishes;
+fasting => vrat dishes only; cook off => no-cook dishes). Never invent ingredients."""
 
 
 class ClaudePlanner:
@@ -182,27 +299,31 @@ class ClaudePlanner:
         stock = "\n".join(f"- {k}: {fmt_qty(v['qty'], v['unit'])}, days left: {v['days_left']}"
                           for k, v in sorted(ctx.stock.items(), key=lambda kv: (kv[1]['days_left'] is None,
                                                                               kv[1]['days_left'] or 0)))
-        book = "\n".join(f"- {rid}: {r['name']} | needs " +
-                         ", ".join(f"{i} {fmt_qty(*q)}" for i, q in r["needs"].items()) +
-                         f" | stove={r['stove']} | prep={r['prep']}min" for rid, r in RECIPES.items())
+        pool = [rid for rid in RECIPES if allowed(rid, ctx)]
+        book = "\n".join(f"- {rid}: {RECIPES[rid]['name']} [{RECIPES[rid]['course']}] needs " +
+                         ", ".join(f"{i} {fmt_qty(*q)}" for i, q in RECIPES[rid]["needs"].items()) +
+                         f" | prep={RECIPES[rid]['prep']}min" for rid in pool)
         recent = "\n".join(f"- {m['day']}: {m['dish']}" for m in ctx.recent_meals) or "- none"
-        user = (f"Cooking day: {ctx.cook_day}\n\nConfirmed stock (soonest to spoil first):\n{stock}\n\n"
-                f"Recent meals:\n{recent}\n\nPreferences: {ctx.preferences}\nToday's constraints: {ctx.constraints}\n"
-                f"Long-term notes: {[m['note'] for m in ctx.memory]}\nOwner feedback so far: {ctx.feedback}\n"
-                f"Already rejected: {sorted(ctx.exclude_ids)}\n\nRecipe book:\n{book}")
+        user = (f"Cooking day: {ctx.cook_day}\nServings multiplier: x{ctx.scale:g} (recipes are for 4)\n"
+                f"Per-day flags: {ctx.flags}\nHousehold preferences: {ctx.preferences}\n"
+                f"Active constraints: {ctx.constraints}\nLong-term notes: {[m['note'] for m in ctx.memory]}\n"
+                f"Owner feedback so far: {ctx.feedback}\nMains already rejected: {sorted(ctx.exclude_ids)}\n\n"
+                f"Confirmed stock (soonest to spoil first):\n{stock}\n\nRecent meals:\n{recent}\n\n"
+                f"Allowed recipes (quantities are for 4 servings):\n{book}")
         resp = self.client.messages.create(
-            model=self.model, max_tokens=800, system=SYSTEM, tools=[PROPOSE_TOOL],
+            model=self.model, max_tokens=900, system=SYSTEM, tools=[PROPOSE_TOOL],
             tool_choice={"type": "tool", "name": "propose_menu"},
             messages=[{"role": "user", "content": user}])
-        picks = []
+        picks: list[Proposal] = []
         for block in resp.content:
-            if block.type == "tool_use":
-                for d in block.input.get("dishes", []):
-                    rid = d.get("recipe_id")
-                    if rid in RECIPES and not _violates(rid, ctx) and all(p.recipe_id != rid for p in picks):
-                        picks.append(enrich(rid, ctx, d.get("reason")))
+            if block.type != "tool_use":
+                continue
+            for m in block.input.get("menus", []):
+                ids = [i for i in dict.fromkeys(m.get("dish_ids", [])) if i in RECIPES and allowed(i, ctx)]
+                if ids and ids[0] not in ctx.exclude_ids and all(p.recipe_ids[0] != ids[0] for p in picks):
+                    picks.append(enrich(ids[:3], ctx, m.get("reason")))
         if not picks:
-            raise ValueError("Claude returned no valid dishes")
+            raise ValueError("Claude returned no valid menus")
         picks = picks[:n]
         return Proposals(picks, tradeoffs(picks, ctx), "claude")
 
@@ -212,11 +333,15 @@ class Planner:
 
     def __init__(self, claude: ClaudePlanner | None = None):
         self.claude = claude
+        self.last_source = "heuristic"
 
     def propose(self, ctx: PlanContext, n: int = 3) -> Proposals:
         if self.claude:
             try:
-                return self.claude.propose(ctx, n)
+                out = self.claude.propose(ctx, n)
+                self.last_source = "claude"
+                return out
             except Exception:
                 pass
+        self.last_source = "heuristic"
         return heuristic_propose(ctx, n)

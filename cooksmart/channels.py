@@ -18,6 +18,7 @@ class CookMessage:
     orders or owner conversation can reach this type."""
     text: str
     lang: str = "hi-IN"
+    buttons: tuple = ()
 
 
 class MessageChannel(Protocol):
@@ -33,4 +34,5 @@ class MockChannel:
         repo.add_message(self.db, hid, "owner", "agent", text, {"buttons": buttons} if buttons else None)
 
     def send_cook(self, hid, msg):
-        repo.add_message(self.db, hid, "cook", "agent", msg.text, {"lang": msg.lang, "voice": True})
+        repo.add_message(self.db, hid, "cook", "agent", msg.text, {"lang": msg.lang, "voice": True,
+                                                                    "buttons": list(msg.buttons) or None})

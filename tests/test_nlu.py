@@ -25,10 +25,12 @@ def test_problems():
     assert parse_cook("आज time nahi hai")[0] == {"type": "cannot_cook", "reason": "time"}
 
 
-def test_yes_no_only_when_pending():
-    assert parse_cook("haan", {"x": 1}) == [{"type": "yes"}]
+def test_short_yes_no_always_understood():
+    # the brief ends with "samajh gaye? haan bolen", so a bare yes/no must work with nothing pending
+    assert parse_cook("haan") == [{"type": "yes"}]
+    assert parse_cook("हाँ") == [{"type": "yes"}]
     assert parse_cook("nahi", {"x": 1}) == [{"type": "no"}]
-    assert parse_cook("haan")[0]["type"] == "unknown"   # nothing to confirm
+    assert parse_cook("haan, aa gayi")[0]["type"] == "arrived"   # a yes inside another phrase isn't a bare yes
 
 
 def test_unknown_item_never_invented():
