@@ -23,6 +23,7 @@ from .providers.grocery import GroceryProvider
 from .providers.payment import PaymentProvider
 from .providers.speech import LOW_CONFIDENCE, SpeechProvider, Transcript
 from .providers.voice import VoiceVerifier
+from . import daystory
 from .recipes import ITEMS, RECIPES, fmt_qty
 
 NIGHT_MINUTES_LEFT = 630     # ~21:30 order -> 08:00 cook arrival
@@ -175,6 +176,9 @@ class Agent:
                                 notes=props.tradeoffs, state="review")
         repo.audit(self.db, hid, "nightly_review", plan=plan["id"], source=props.source, flags=flags,
                    proposals=[p.recipe_ids for p in props.items], doubtful=[i["name"] for i in doubtful])
+        low = [i for i in inv.list_items(self.db, hid) if (inv.days_left(i, day) is not None and inv.days_left(i, day) <= 1)]
+        repo.add_story(self.db, hid, plan["id"], "review", "Checked the fridge" + (
+            ": " + ", ".join(i["name"] for i in low[:4]) + " going off soon." if low else ": all fresh."))
         self._send_proposals(hid, plan, "\n".join(preface))
         return plan
 
@@ -368,6 +372,7 @@ class Agent:
             return
         plan = repo.update_plan(self.db, hid, plan["id"], chosen=ids, reviewed=reviewed, offer=None)
         repo.audit(self.db, hid, "menu_chosen", plan=plan["id"], dishes=ids, reviewed=reviewed)
+        repo.add_story(self.db, hid, plan["id"], "plan", f"Menu: {_names(ids)}")
         self._say(hid, f"👍 Got it: *{_names(ids)}*. Checking the kitchen...")
         self._feasibility(hid, plan)
 
@@ -543,6 +548,8 @@ class Agent:
         repo.update_plan(self.db, hid, plan["id"], state="ordered", order_id=order["id"])
         repo.audit(self.db, hid, "order_placed", plan=plan["id"], order=order["id"], auth=auth.kind,
                    total=offer["total"], store=offer["store"])
+        repo.add_story(self.db, hid, plan["id"], "shop", f"Ordered from {offer['store']}",
+                       [{"item": l["name"], "qty": l["qty"], "unit": l.get("unit", ""), "incoming": True} for l in offer["items"]])
         how = ("You approved it" if auth.kind == "owner_tap" else
                f"I ordered this automatically, within your ₹{min(h['auto_cap'], h['mandate_ceiling']):.0f} limit")
         late = "\n⚠️ It may arrive after the cook; she'll be told what to start with." if offer.get("late") else ""
@@ -619,6 +626,7 @@ class Agent:
             self._cook_say(hid, cookmsgs.render("no_menu", lang))
             self._say(hid, "😟 The cook arrived but there is no menu I can stand behind. Please decide today's meal.")
             return plan
+        repo.add_story(self.db, hid, plan["id"], "brief", "Cook briefed: " + _names(plan["chosen"]))
         if self._call_enabled(h) and self._place_call(hid, plan, "brief", start, wait):
             return repo.update_plan(self.db, hid, plan["id"], state="briefed", brief={"start": start, "wait": wait})
         self._cook_say(hid, self._compose_brief(lang, plan["chosen"], start, wait, switched))
@@ -680,6 +688,8 @@ class Agent:
         for line in order["items"]:
             inv.add_stock(self.db, hid, line["name"], line["qty"], h["sim_date"])
         repo.update_order(self.db, hid, order["id"], status="delivered", otp=None)
+        repo.add_story(self.db, hid, order["plan_id"], "delivery", f"Groceries from {order['store']} arrived",
+                       [{"item": l["name"], "qty": l["qty"], "unit": l.get("unit", "")} for l in order["items"]])
         if hasattr(self.grocery, "mark_delivered"):
             self.grocery.mark_delivered(order["provider_ref"])
         plan = repo.get_plan(self.db, hid, order["plan_id"])
@@ -858,6 +868,20 @@ class Agent:
         self._cook_say(hid, cookmsgs.render("eod", h["cook_language"]))
         self._say(hid, "🌙 Asked the cook what was used today. I'll reconcile stock from her answer.")
 
+    def serve_meal(self, hid: str, meal: str) -> dict | None:
+        """A meal is served: record it and what it used. Stock is reconciled once, at close of day."""
+        plan = repo.latest_plan(self.db, hid)
+        if meal not in daystory.MEALS or not plan or plan["state"] not in ("briefed", "closing") or meal in plan["served"]:
+            return plan
+        ids = daystory.split(plan["chosen"])[meal]
+        needs = daystory.meal_needs(plan["chosen"], self._scale(plan), meal)
+        plan = repo.update_plan(self.db, hid, plan["id"], served=plan["served"] + [meal])
+        text = (_names(ids) if ids else {"breakfast": "Light: chai and toast", "lunch": "Nothing planned",
+                                          "dinner": "Nothing planned"}[meal])
+        repo.add_story(self.db, hid, plan["id"], meal, text, daystory.deltas_from(needs))
+        repo.audit(self.db, hid, "meal_served", plan=plan["id"], meal=meal, dishes=ids)
+        return plan
+
     def close_day(self, hid: str) -> dict | None:
         plan = repo.latest_plan(self.db, hid)
         if not plan or plan["state"] == "closed":
@@ -867,10 +891,15 @@ class Agent:
         if h["sim_date"] < day:
             repo.update_household(self.db, hid, sim_date=day)
         reported = set(plan["report"])
+        before = {i["name"]: i["qty"] for i in inv.list_items(self.db, hid)}
         estimated = inv.apply_usage(self.db, hid, inv.needs_for(plan["chosen"], self._scale(plan)), day, reported)
         for rid in plan["chosen"]:
             repo.add_meal(self.db, hid, day, rid, RECIPES[rid]["name"], plan["reviewed"])
         plan = repo.update_plan(self.db, hid, plan["id"], state="closed")
+        after = {i["name"]: i["qty"] for i in inv.list_items(self.db, hid)}
+        repo.add_story(self.db, hid, plan["id"], "wrapup", "Stock reconciled with what the cook reported", [
+            {"item": k, "qty": round(after.get(k, 0) - v, 1), "unit": ITEMS[k]["unit"]} for k, v in before.items()
+            if k in ITEMS and abs(after.get(k, 0) - v) > 0.01])
         repo.audit(self.db, hid, "day_closed", plan=plan["id"], reported=sorted(reported), estimated=estimated)
         msg = f"🌙 *Day closed.* Cooked: {_names(plan['chosen'])}."
         if reported:

@@ -13,20 +13,24 @@ flow runs locally with no accounts. Real providers can be swapped in later witho
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python -m cooksmart            # open http://127.0.0.1:8000
-python -m pytest               # 276 tests, fully offline
+python -m pytest               # 278 tests, fully offline
 ```
 
 Optional: `cp .env.example .env` and add `ANTHROPIC_API_KEY` so Claude plans menus and parses the cook's
 messages. Without a key, a built-in heuristic planner and a rule-based Hindi/Hinglish/English parser are used.
 
-## The app: four views
+## The app: a smart fridge
 
 | View | What it is for |
 |---|---|
-| **Simulator** | Two WhatsApp-style phones (you, and the cook that you play) with three cards: pick a situation, press the one *What happens next* button, and a few settings. Nothing else on screen. |
-| **How it works** | One diagram of the whole flow: an evening of planning, a morning of cooking, a check at the end. Click any step to see what happens, what goes wrong, and what the agent will never do. The step your simulation is on is highlighted. |
-| **Agent Studio** | Edit what the Gnani voice agent is told: the **system prompt**, the **knowledge base** documents (and add your own), the **FAQs**, and the **household** (people, allergies, taste, kitchen). |
-| **Kitchen & logs** | Stock with use-by dates, orders, the door check, switches to make things fail on purpose, and an audit log of every decision. |
+| **Fridge** | The home screen. A kitchen wall with the **pantry** (jars that empty), the **fridge** (dairy, meat, crisper; items that are about to spoil glow, ordered items show as dashed ghosts, and floating chips show what a meal used or a delivery added), the **smart screen** (the chat and voice assistant: *Family* or *Cook*, big 🎤, quick replies; ⚙ holds the situation picker, ordering mode and cook-brief method) and **Today**, the day step by step: night check, menu, order, cook brief, delivery, breakfast, lunch, dinner, wrap-up. One **Next** button runs the day. |
+| **How it works** | One diagram of the whole flow. Click any step to see what happens, what goes wrong and what the agent will never do. |
+| **Agent Studio** | Edit what the Gnani voice agent is told: the system prompt, the knowledge base documents, the FAQs and the household. |
+| **Stock & logs** | Stock with use-by dates, orders, the door check, switches to make things fail on purpose, and an audit log. |
+
+Meals: items used by breakfast, lunch and dinner are subtracted on the fridge as each is served; the real stock is
+reconciled once at the wrap-up from what the cook reports. The knowledge base is written in Devanagari with everyday
+English words (फ्रिज, एक्सपायरी, स्टोरेज, कॉशन) so a cook hears the language she uses.
 
 **Agent Studio** keeps every edit as a version you can restore, and checks before saving: a prompt that wouldn't render
 (or uses a variable CookSmart doesn't send) is refused, and removing today's allergy cautions needs an explicit

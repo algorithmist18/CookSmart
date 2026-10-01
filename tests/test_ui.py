@@ -14,7 +14,7 @@ HTML = Path("cooksmart/static/index.html").read_text(encoding="utf-8")
 def test_page_is_served_with_all_four_views():
     r = TestClient(create_app(Settings(":memory:", "", "m", "", "t"), DB(":memory:"))).get("/")
     assert r.status_code == 200
-    for label in ("Simulator", "How it works", "Agent Studio", "Kitchen &amp; logs", "System prompt", "Knowledge base", "FAQs", "Household"):
+    for label in ("Fridge", "How it works", "Agent Studio", "Stock &amp; logs", "System prompt", "Knowledge base", "FAQs", "Household"):
         assert label in r.text, label
 
 

@@ -105,6 +105,14 @@ CREATE TABLE IF NOT EXISTS media (
     mime TEXT NOT NULL,
     data BLOB NOT NULL
 );
+CREATE TABLE IF NOT EXISTS story (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id TEXT NOT NULL,
+    plan_id INTEGER,
+    stage TEXT NOT NULL,                             -- review | plan | shop | brief | delivery | breakfast | lunch | dinner | wrapup
+    text TEXT NOT NULL,
+    deltas TEXT NOT NULL DEFAULT '[]'                -- [{item, qty (+ in, - out), unit}]
+);
 CREATE TABLE IF NOT EXISTS calls (
     reference_id TEXT PRIMARY KEY,                   -- our clientReferenceId: household:plan:type:n
     household_id TEXT NOT NULL,
@@ -134,6 +142,7 @@ MIGRATIONS = [
     ("households", "family_size", "INTEGER NOT NULL DEFAULT 4"),
     ("plans", "excluded", "TEXT NOT NULL DEFAULT '[]'"),
     ("plans", "flags", "TEXT NOT NULL DEFAULT '{}'"),
+    ("plans", "served", "TEXT NOT NULL DEFAULT '[]'"),
 ]
 
 

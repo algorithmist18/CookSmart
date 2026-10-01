@@ -6,7 +6,7 @@ import json
 
 from .db import DB
 
-PLAN_JSON = ("proposals", "chosen", "feedback", "gaps", "offer", "brief", "pending", "report", "notes", "excluded", "flags")
+PLAN_JSON = ("proposals", "chosen", "feedback", "gaps", "offer", "brief", "pending", "report", "notes", "excluded", "flags", "served")
 
 
 def now_iso() -> str:
@@ -41,7 +41,7 @@ def find_household_by_phone(db: DB, phone: str) -> tuple[dict, str] | None:
 
 def wipe_household_data(db: DB, hid: str) -> None:
     """Scenario reset: delete everything the household has accumulated (keeps the household row)."""
-    for table in ("inventory", "meals", "plans", "orders", "messages", "audit", "memory", "calls"):
+    for table in ("inventory", "meals", "plans", "orders", "messages", "audit", "memory", "calls", "story"):
         db.execute(f"DELETE FROM {table} WHERE household_id=?", (hid,))
 
 
@@ -58,7 +58,7 @@ def _decode_plan(row: dict | None) -> dict | None:
         return None
     for f in PLAN_JSON:
         row[f] = json.loads(row[f]) if row[f] else None
-    for f in ("proposals", "chosen", "feedback", "gaps", "notes", "excluded", "flags"):
+    for f in ("proposals", "chosen", "feedback", "gaps", "notes", "excluded", "flags", "served"):
         row[f] = row[f] or []
     row["report"] = row["report"] or {}
     row["flags"] = row["flags"] or {}
@@ -214,3 +214,17 @@ def update_call(db: DB, ref: str, **fields) -> None:
 def list_calls(db: DB, hid: str, limit: int = 10) -> list[dict]:
     return db.query("SELECT reference_id, call_type, status, disposition, conversation_id, created_at FROM calls "
                     "WHERE household_id=? ORDER BY created_at DESC LIMIT ?", (hid, limit))
+
+
+# ---------- the day's story ----------
+def add_story(db: DB, hid: str, plan_id: int | None, stage: str, text: str, deltas: list[dict] | None = None) -> None:
+    db.execute("INSERT INTO story (household_id, plan_id, stage, text, deltas) VALUES (?,?,?,?,?)",
+               (hid, plan_id, stage, text, json.dumps(deltas or [])))
+
+
+def list_story(db: DB, hid: str, plan_id: int | None = None) -> list[dict]:
+    rows = db.query("SELECT * FROM story WHERE household_id=? " + ("AND plan_id=? " if plan_id else "") + "ORDER BY id",
+                    (hid, plan_id) if plan_id else (hid,))
+    for r in rows:
+        r["deltas"] = json.loads(r["deltas"])
+    return rows

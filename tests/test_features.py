@@ -317,3 +317,40 @@ def test_old_databases_are_migrated(tmp_path):
     cols = {r["name"] for r in db.query("PRAGMA table_info(plans)")}
     assert {"flags", "excluded"} <= cols
     assert "family_size" in {r["name"] for r in db.query("PRAGMA table_info(households)")}
+
+
+# ------------------------------------------------------------------ the day: fridge + three meals
+def test_every_item_has_a_fridge_view():
+    from cooksmart import daystory
+    from cooksmart.recipes import ITEMS
+    assert [i for i in ITEMS if i not in daystory.ITEM_VIEW] == []
+    assert all(daystory.view(i)["emoji"] for i in ITEMS)
+
+
+def test_day_story_fridge_decreases_through_meals_and_grows_on_delivery():
+    c = TestClient(create_app(Settings(":memory:", "", "m", "", "t"), DB(":memory:")))
+    c.post("/api/households", json={"id": "h"})
+    c.post("/api/h/scenario/classic")
+    st = lambda: c.get("/api/h/owner/state").json()
+    c.post("/api/h/trigger/nightly_review")
+    c.post("/api/h/owner/message", json={"text": "1"})
+    c.post("/api/h/owner/message", json={"text": "approve"})
+    s = st()
+    stages = [x["stage"] for x in s["story"]]
+    assert stages[:2] == ["review", "plan"]
+    c.post("/api/h/trigger/morning")
+    s = st()
+    shown = {i["name"]: i["shown"] for i in s["fridge"]}
+    for m in ("breakfast", "lunch", "dinner"):
+        c.post(f"/api/h/trigger/serve_{m}")
+    s2 = st()
+    assert s2["served"] == ["breakfast", "lunch", "dinner"]
+    after = {i["name"]: i["shown"] for i in s2["fridge"]}
+    assert any(after.get(k, 0) < v for k, v in shown.items())          # shelves went down
+    assert {x["stage"] for x in s2["story"]} >= {"breakfast", "lunch", "dinner"}
+    assert any(d["qty"] < 0 for x in s2["story"] if x["stage"] == "lunch" for d in x["deltas"])
+    c.post("/api/h/trigger/serve_lunch")                                # serving twice changes nothing
+    assert st()["served"] == ["breakfast", "lunch", "dinner"]
+    c.post("/api/h/trigger/end_of_day")
+    c.post("/api/h/trigger/close_day")
+    assert st()["story"][-1]["stage"] == "wrapup"

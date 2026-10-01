@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 
-from . import callresult, gnani_kb, gnani_prompt, studio
+from . import callresult, daystory, gnani_kb, gnani_prompt, studio
 from . import inventory as inv
 from . import profile as prof
 from . import repo, scenarios
@@ -23,6 +23,7 @@ from .config import Settings, get_settings
 from .db import DB
 from .nlu import NLU, ClaudeNLU
 from .planner import ClaudePlanner, Planner
+from .recipes import ITEMS
 from .providers.controls import MockControls
 from .providers.dispatch import MockDispatchProvider
 from .providers.grocery import MockGroceryProvider
@@ -125,10 +126,15 @@ def next_step(plan: dict | None, orders: list[dict]) -> dict:
         hint = "The agent re-checks the order, then briefs the cook. The cook can also just message *aa gayi*."
         return dict(step=6 if st == "ordered" else 4, label=label, action=trig("morning"), hint=hint)
     if st == "briefed":
+        todo = [m for m in daystory.MEALS if m not in plan.get("served", [])]
+        if todo and not open_order:
+            m = todo[0]
+            return dict(step=7, label=f"🍽️ {m.title()} is served", action=trig("serve_" + m),
+                        hint="The cook makes it, the family eats, and the fridge shelves go down.")
         if open_order:
             return dict(step=7, label="🛵 Rider arrives (cook's voice)", action={"kind": "door", "voice": "cook"},
                         hint="Try the stranger's voice from the Door panel to see the OTP fallback.")
-        return dict(step=7, label="🌙 Evening: ask the cook what was used", action=trig("end_of_day"),
+        return dict(step=8, label="🌙 Wrap up: ask the cook what was used", action=trig("end_of_day"),
                     hint="Or the cook can message *khana ban gaya*.")
     return dict(step=8, label="✅ Close the day", action=trig("close_day"),
                 hint="Answer the agent in the cook chat first (e.g. *paneer khatam*, then *haan*).")
@@ -200,7 +206,22 @@ def create_app(settings: Settings | None = None, db: DB | None = None, platform:
             i["doubtful"] = inv.is_doubtful(i, h["sim_date"])
             i["spoiled"] = inv.is_spoiled(i, cook_day)
             i["days_left"] = inv.days_left(i, cook_day)
-        return {"household": h, "inventory": items, "plan": plan, "orders": repo.list_orders(db, hid),
+        orders = repo.list_orders(db, hid)
+        used = daystory.consumed_so_far(plan, float(plan["flags"].get("scale", 1.0))) if plan else {}
+        incoming = {}
+        for o in orders:
+            if o["status"] == "accepted":
+                for l in o["items"]:
+                    incoming[l["name"]] = incoming.get(l["name"], 0) + l["qty"]
+        for i in items:
+            i.update(daystory.view(i["name"]))
+            i["shown"] = round(max(0.0, i["qty"] - used.get(i["name"], 0.0)), 1)
+            i["incoming"] = incoming.pop(i["name"], 0)
+        extra = [{"name": n, "qty": 0, "shown": 0, "unit": ITEMS[n]["unit"], "incoming": q, "days_left": None,
+                  "doubtful": False, "spoiled": False, **daystory.view(n)} for n, q in incoming.items() if n in ITEMS]
+        story = repo.list_story(db, hid, plan["id"]) if plan else []
+        return {"fridge": items + extra, "story": story, "meals": daystory.split(plan["chosen"]) if plan else {},
+                "served": plan["served"] if plan else [], "household": h, "inventory": items, "plan": plan, "orders": repo.list_orders(db, hid),
                 "audit": repo.list_audit(db, hid), "memory": repo.list_memory(db, hid),
                 "controls": controls.as_dict(), "nlu_source": agent.nlu.last_source,
                 "planner": agent.planner.last_source if agent.planner.claude else "heuristic",
@@ -502,6 +523,7 @@ def create_app(settings: Settings | None = None, db: DB | None = None, platform:
             "nightly_review": agent.nightly_review, "cutoff": agent.cutoff,
             "morning": agent.morning_handoff, "check_orders": agent.check_orders,
             "end_of_day": agent.end_of_day, "close_day": agent.close_day,
+            **{f"serve_{m}": (lambda h, m=m: agent.serve_meal(h, m)) for m in daystory.MEALS},
         }
         if name not in actions:
             raise HTTPException(404, "unknown trigger")
