@@ -658,13 +658,27 @@ class Agent:
 
     # ------------------------------------------------------------------ cook chat
     def handle_cook(self, hid: str, text: str, voice: bool = True) -> None:
+        """Typed text from the cook (optionally flagged as a voice note in the simulator)."""
+        lang = self._h(hid)["cook_language"]
+        tr = self.speech.transcribe(text, lang) if voice else Transcript(text, 1.0, lang, "text")
+        self._cook_turn(hid, tr, shown=text, voice=voice)
+
+    def handle_cook_audio(self, hid: str, audio: bytes, mime: str = "audio/wav", hint: str | None = None) -> None:
+        """A real recorded voice note: transcribed by the speech provider, then handled like any message."""
+        lang = self._h(hid)["cook_language"]
+        tr = self.speech.transcribe_audio(audio, mime, lang, hint)
+        repo.audit(self.db, hid, "stt", source=tr.source, confidence=round(tr.confidence, 2), chars=len(tr.text),
+                   audio_bytes=len(audio), error=tr.error, raw=tr.raw)
+        self._cook_turn(hid, tr, shown=tr.text or "(unclear audio)", voice=True)
+
+    def _cook_turn(self, hid: str, tr: Transcript, shown: str, voice: bool) -> None:
         h = self._h(hid)
         lang = h["cook_language"]
         plan = repo.latest_plan(self.db, hid)
-        tr = self.speech.transcribe(text, lang) if voice else Transcript(text, 1.0, lang)
-        repo.add_message(self.db, hid, "cook", "user", text, {"voice": True} if voice else None)
-        if tr.confidence < LOW_CONFIDENCE:
-            repo.audit(self.db, hid, "cook_low_confidence", confidence=tr.confidence)
+        repo.add_message(self.db, hid, "cook", "user", shown,
+                         {"voice": True, "stt": tr.source, "confidence": round(tr.confidence, 2)} if voice else None)
+        if tr.confidence < LOW_CONFIDENCE or not tr.text.strip():
+            repo.audit(self.db, hid, "cook_low_confidence", confidence=tr.confidence, source=tr.source)
             return self._cook_say(hid, cookmsgs.render("ask_repeat", lang))
 
         intents = self.nlu.cook(tr.text, plan["pending"] if plan else None)
@@ -703,7 +717,7 @@ class Agent:
                 return self._cook_arrived(hid, plan, lang)
             return self._cook_say(hid, cookmsgs.render("greet", lang))
         repo.audit(self.db, hid, "cook_not_understood", text=tr.text)
-        self._say(hid, f"❓ The cook said something I couldn't understand: “{text}”. I asked her to rephrase.")
+        self._say(hid, f"❓ The cook said something I couldn't understand: “{tr.text}”. I asked her to rephrase.")
         self._cook_say(hid, cookmsgs.render("help", lang))
 
     def _cook_arrived(self, hid: str, plan: dict | None, lang: str) -> None:

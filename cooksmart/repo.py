@@ -165,3 +165,17 @@ def add_meal(db: DB, hid: str, day: str, dish_id: str, dish: str, reviewed: bool
 def recent_meals(db: DB, hid: str, since_day: str) -> list[dict]:
     return db.query("SELECT day, dish_id, dish FROM meals WHERE household_id=? AND day>=? ORDER BY day",
                     (hid, since_day))
+
+
+# ---------- media (synthesised voice notes) ----------
+def add_media(db: DB, hid: str, key: str, mime: str, data: bytes) -> int:
+    """Store a voice note; the same text is only ever synthesised (and billed) once per household."""
+    row = db.one("SELECT id FROM media WHERE household_id=? AND key=?", (hid, key))
+    if row:
+        return row["id"]
+    return db.execute("INSERT INTO media (household_id, key, mime, data) VALUES (?,?,?,?)",
+                      (hid, key, mime, data)).lastrowid
+
+
+def get_media(db: DB, hid: str, media_id: int) -> dict | None:
+    return db.one("SELECT mime, data FROM media WHERE household_id=? AND id=?", (hid, media_id))

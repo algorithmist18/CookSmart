@@ -98,6 +98,13 @@ CREATE TABLE IF NOT EXISTS memory (
     note TEXT NOT NULL,
     day TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS media (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id TEXT NOT NULL,
+    key TEXT NOT NULL,                               -- hash of (voice, text): identical text is stored once
+    mime TEXT NOT NULL,
+    data BLOB NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_msg ON messages (household_id, channel, id);
 """
 

@@ -13,7 +13,7 @@ flow runs locally with no accounts. Real providers can be swapped in later witho
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python -m cooksmart            # open http://127.0.0.1:8000
-python -m pytest               # 128 tests, fully offline
+python -m pytest               # 155 tests, fully offline
 ```
 
 Optional: `cp .env.example .env` and add `ANTHROPIC_API_KEY` so Claude plans menus and parses the cook's
@@ -34,6 +34,33 @@ records real Hindi speech; elsewhere type and it is sent as a voice note.
 * **What happens next** is a guided button plus a stepper, so you never wonder what to press.
 * **Ordering mode** toggle: *Approve each order* or *Auto-order within limits*.
 * **Break things**, **Door**, live **kitchen stock**, **orders** and an **audit log** of every decision.
+
+## Gnani voice for the cook
+
+Set `GNANI_API_KEY` in `.env` (copy `.env.example`) and restart. Then:
+
+* The cook's 🎤 button **records real audio** in the browser, converts it to 16 kHz mono WAV and uploads it.
+  Gnani Prisma (`api.vachana.ai/stt/v3`, `hi-IN`) transcribes it; the transcript goes through the same
+  read-back-before-acting flow as typed messages. Ingredient names (Hindi and Hinglish) are sent as a
+  `bias_list` so the recogniser favours the kitchen vocabulary.
+* Every message the agent sends the cook is synthesised by Gnani Timbre (voice `Nalini`, `timbre-v2.5`) and
+  plays as a real voice note. Each distinct sentence is synthesised once and cached, so repeated briefs cost
+  nothing extra.
+* If Gnani fails (bad key, network, unreadable reply), the cook is asked to repeat or type and nothing is acted
+  on; the error is visible in the audit log. The status line shows `voice: 🟢 Gnani Prisma / Gnani Timbre`.
+
+No key? It runs offline: Chrome's own speech recognition supplies a transcript hint and the browser reads
+messages aloud. To try the Gnani path without credits, run the stand-in server:
+
+```bash
+python -m cooksmart.fake_gnani                       # terminal 1: serves on :8801, speaks a canned phrase
+GNANI_API_KEY=test GNANI_STT_URL=http://127.0.0.1:8801/stt/v3 \
+GNANI_TTS_URL=http://127.0.0.1:8801/api/v1/tts/inference python -m cooksmart      # terminal 2
+```
+
+The request shapes follow Gnani's published curl examples. The response bodies were not in those examples,
+so they are parsed defensively; if a real reply is not understood, the audit log (`stt` event, field `raw`)
+shows exactly what came back.
 
 ## Things to try
 
@@ -90,8 +117,8 @@ and a cook who is off. Add recipes in `cooksmart/recipes.py` and scenarios in `c
 
 * **WhatsApp**: implement `MessageChannel` (`channels.py`) on the Cloud API with two numbers, one for the
   owner and one for the cook. `/webhook/whatsapp` already parses Meta's payload format.
-* **Gnani**: implement `GnaniSpeechProvider` (`providers/speech.py`). WhatsApp voice notes are OGG/Opus and
-  need converting before STT.
+* **Gnani for WhatsApp**: voice notes arrive as OGG/Opus; convert to 16 kHz WAV (ffmpeg) and call
+  `agent.handle_cook_audio`.
 * **Scheduler**: `/api/{hid}/trigger/*` are the calls cron or Celery would make (nightly review after
   dinner, cutoff, morning, end of day).
 * **Payments, groceries, logistics**: implement the provider interfaces in `providers/`.

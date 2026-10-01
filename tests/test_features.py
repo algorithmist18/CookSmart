@@ -252,7 +252,7 @@ def test_cook_voice_notes_are_marked_as_voice(env):
     env.agent.handle_cook(env.hid, "namaste", voice=True)
     env.agent.handle_cook(env.hid, "namaste", voice=False)
     msgs = [m for m in repo.list_messages(env.db, env.hid, "cook") if m["sender"] == "user"]
-    assert msgs[0]["payload"] == {"voice": True} and msgs[1]["payload"] is None
+    assert msgs[0]["payload"]["voice"] is True and msgs[1]["payload"] is None
 
 
 def test_cook_readback_has_quick_reply_buttons(env):

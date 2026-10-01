@@ -27,12 +27,21 @@ class MessageChannel(Protocol):
 
 
 class MockChannel:
-    def __init__(self, db: DB):
-        self.db = db
+    def __init__(self, db: DB, speech=None):
+        self.db, self.speech = db, speech
 
     def send_owner(self, hid, text, buttons=None):
         repo.add_message(self.db, hid, "owner", "agent", text, {"buttons": buttons} if buttons else None)
 
     def send_cook(self, hid, msg):
-        repo.add_message(self.db, hid, "cook", "agent", msg.text, {"lang": msg.lang, "voice": True,
-                                                                    "buttons": list(msg.buttons) or None})
+        """The cook gets a voice note. If a speech service is configured the audio is synthesised (and cached);
+        otherwise the UI reads the text aloud with the browser's voice."""
+        payload = {"lang": msg.lang, "voice": True, "buttons": list(msg.buttons) or None}
+        if self.speech is not None:
+            try:
+                note = self.speech.synthesize(msg.text, msg.lang)
+            except Exception:
+                note = None
+            if note:
+                payload["media"] = repo.add_media(self.db, hid, note.key, note.mime, note.audio)
+        repo.add_message(self.db, hid, "cook", "agent", msg.text, payload)

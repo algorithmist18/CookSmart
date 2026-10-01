@@ -264,17 +264,45 @@ class Phone {
   submit() { const t = this.input.value.trim(); if (t) { this.input.value = ''; this.syncBtn(); this.send(t); } }
   send(t) { this.sendFn(t); }
   toast(t) { const d = document.createElement('div'); d.className = 'toast'; d.textContent = t; this.root.appendChild(d); setTimeout(() => d.remove(), 3200); }
-  mic() {
+  async mic() {
     if (this.kind === 'owner') return this.toast('In this demo the owner replies by text. Use the cook phone to try voice notes.');
+    if (this.recording) return this.stopRec();
+    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder))
+      return this.toast('Recording needs a modern browser on localhost or https. You can still type: it is sent as a voice note.');
+    try { this.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (e) { return this.toast('Microphone permission was denied. You can still type: it is sent as a voice note.'); }
+    this.chunks = []; this.hint = '';
+    const mr = this.mr = new MediaRecorder(this.stream);
+    mr.ondataavailable = e => e.data.size && this.chunks.push(e.data);
+    mr.onstop = () => this.finishRec();
+    // The browser's own transcript is only a fallback hint, used when no speech service is configured.
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return this.toast('This browser can\'t record speech. Type your message and send it: it goes as a voice note.');
-    if (this.rec) { this.rec.stop(); return; }
-    const r = new SR(); r.lang = 'hi-IN'; r.interimResults = false; this.rec = r;
-    this.btn.classList.add('rec'); this.input.placeholder = '🎙 Listening… speak in Hindi';
-    r.onresult = e => this.sendFn(e.results[0][0].transcript, true);
-    r.onerror = () => this.toast('Couldn\'t hear anything. Try again or type.');
-    r.onend = () => { this.rec = null; this.btn.classList.remove('rec'); this.input.placeholder = 'Message (Hindi, Hinglish or English)'; };
-    r.start();
+    if (SR) {
+      const r = this.sr = new SR(); r.lang = 'hi-IN'; r.continuous = true; r.interimResults = false;
+      r.onresult = e => { this.hint = Array.from(e.results).map(x => x[0].transcript).join(' '); };
+      try { r.start(); } catch (e) { /* already running */ }
+    }
+    mr.start(); this.recording = true; this.t0 = Date.now(); this.btn.classList.add('rec'); this.btn.textContent = '⏹';
+    this.timer = setInterval(() => {
+      const sec = Math.floor((Date.now() - this.t0) / 1000);
+      this.input.placeholder = `🎙 Recording ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')} · tap ⏹ to send`;
+      if (sec >= 55) this.stopRec();
+    }, 250);
+  }
+  stopRec() {
+    clearInterval(this.timer); this.recording = false;
+    this.btn.classList.remove('rec'); this.input.placeholder = 'Message (Hindi, Hinglish or English)'; this.syncBtn();
+    this.tooShort = Date.now() - this.t0 < 600;
+    try { this.sr && this.sr.stop(); } catch (e) { /* ignore */ }
+    this.mr.stop(); this.stream.getTracks().forEach(t => t.stop());
+  }
+  async finishRec() {
+    if (this.tooShort) return this.toast('That was too short. Tap 🎤, speak, then tap ⏹.');
+    await sleep(600);                                   // let the browser transcript settle
+    try {
+      const wav = await blobToWav16k(new Blob(this.chunks, { type: this.mr.mimeType }));
+      await sendVoice(wav, this.hint);
+    } catch (e) { this.toast('Could not process that recording: ' + e.message); }
   }
   clear() {
     this.chat.querySelectorAll('.row, .daychip + .daychip').forEach(n => n.remove()); this.lastDir = null; this.lastOut = [];
@@ -296,7 +324,8 @@ class Phone {
     this.lastDir = dir;
     const voice = m.payload && m.payload.voice;
     const text = (voice && dir === 'out') ? m.text.replace(/^🎤\s*/, '') : m.text;
-    if (voice) bub.appendChild(this.voiceEl(m, text, dir));
+    const media = m.payload && m.payload.media;
+    if (voice) bub.appendChild(this.voiceEl(m, text, dir, media));
     else { const s = document.createElement('span'); s.innerHTML = fmt(text); bub.appendChild(s); }
     if (voice) { const tr = document.createElement('div'); tr.className = 'transcript'; tr.innerHTML = fmt(text); bub.appendChild(tr); }
     const meta = document.createElement('span'); meta.className = 'meta';
@@ -312,25 +341,56 @@ class Phone {
       row.appendChild(q);
     }
     this.chat.appendChild(row); this.chat.scrollTop = this.chat.scrollHeight;
-    if (voice && dir === 'in' && this.autoplay()) this.speak(text, $('.voice', bub));
+    if (voice && dir === 'in' && this.autoplay()) this.play(text, $('.voice', bub), media);
   }
   autoplay() { const a = $('[data-autoplay]', this.root); return a && a.checked; }
-  voiceEl(m, text, dir) {
+  voiceEl(m, text, dir, media) {
     const secs = Math.max(2, Math.round(text.length / 11));
     const v = document.createElement('div'); v.className = 'voice';
     const bars = Array.from({ length: 28 }, (_, i) => `<i style="height:${5 + ((m.id * 7 + i * 13) % 17)}px;animation-delay:${(i % 7) * 0.08}s"></i>`).join('');
     v.innerHTML = `<button class="play" type="button">▶</button><div class="wave">${bars}</div><span class="dur">0:${String(secs).padStart(2, '0')}</span>`;
-    $('.play', v).onclick = () => this.speak(text, v);
+    $('.play', v).onclick = () => this.play(text, v, media);
+    if (media) {                                         // real synthesised audio: show its true length
+      const a = new Audio(`/api/${HID}/media/${media}`); a.preload = 'metadata';
+      a.onloadedmetadata = () => { const t = Math.round(a.duration); $('.dur', v).textContent = `0:${String(t).padStart(2, '0')}`; };
+    }
     return v;
   }
-  speak(text, v) {
+  play(text, v, media) {
+    if (this.audio) { this.audio.pause(); this.audio = null; }
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    document.querySelectorAll('.voice.playing').forEach(n => n.classList.remove('playing'));
+    if (media) {
+      const a = this.audio = new Audio(`/api/${HID}/media/${media}`);
+      a.onplay = () => v.classList.add('playing'); a.onended = a.onerror = () => v.classList.remove('playing');
+      return a.play().catch(() => this.toast('Tap ▶ to play (the browser blocked autoplay).'));
+    }
     if (!('speechSynthesis' in window)) return;
-    speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text.replace(/[*_]/g, '')); u.lang = 'hi-IN';
     u.onstart = () => v.classList.add('playing'); u.onend = u.onerror = () => v.classList.remove('playing');
     speechSynthesis.speak(u);
   }
 }
+
+/* ---------- recording: browser audio -> 16 kHz mono PCM16 WAV (what speech services expect) ---------- */
+async function blobToWav16k(blob) {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const decoded = await ctx.decodeAudioData(await blob.arrayBuffer()); ctx.close();
+  const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(decoded.duration * 16000)), 16000);
+  const src = off.createBufferSource(); src.buffer = decoded; src.connect(off.destination); src.start();
+  return encodeWav((await off.startRendering()).getChannelData(0), 16000);
+}
+function encodeWav(samples, rate) {
+  const buf = new ArrayBuffer(44 + samples.length * 2), v = new DataView(buf);
+  const w = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  w(0, 'RIFF'); v.setUint32(4, 36 + samples.length * 2, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, samples.length * 2, true);
+  samples.forEach((x, i) => v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, x)) * 0x7fff, true));
+  return new Blob([buf], { type: 'audio/wav' });
+}
+const sendVoice = (wav, hint) => fetch(`/api/${HID}/cook/voice`, { method: 'POST',
+  headers: { 'Content-Type': 'audio/wav', 'X-Transcript-Hint': encodeURIComponent(hint || '') }, body: wav }).then(refresh);
 
 const phones = {
   owner: new Phone('owner', $('#ph-owner'), t => sendOwner(t)),
@@ -370,7 +430,7 @@ function renderState(s) {
   document.querySelectorAll('#modeSeg button').forEach(b => b.classList.toggle('on', b.dataset.m === h.order_mode));
   $('#capWrap').style.display = h.order_mode === 'auto' ? '' : 'none';
   if (document.activeElement !== $('#cap')) $('#cap').value = h.auto_cap;
-  $('#status').textContent = `planner: ${s.planner} · NLU: ${s.nlu_source} · household of ${h.family_size}`;
+  $('#status').textContent = `planner: ${s.planner} · NLU: ${s.nlu_source} · voice: ${s.speech.live ? '🟢 ' : ''}${s.speech.stt} / ${s.speech.tts}`;
   if (s.scenario) { $('#scenName').textContent = s.scenario.emoji + ' ' + s.scenario.title; }
   // next step + stepper
   const n = s.next; lastNext = n;

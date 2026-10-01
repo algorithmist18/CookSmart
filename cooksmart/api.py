@@ -5,8 +5,10 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 
+from urllib.parse import unquote
+
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 
 from . import inventory as inv
@@ -21,10 +23,23 @@ from .providers.controls import MockControls
 from .providers.dispatch import MockDispatchProvider
 from .providers.grocery import MockGroceryProvider
 from .providers.payment import MockPaymentProvider
-from .providers.speech import MockSpeechProvider
+from .providers.gnani import GnaniSpeechProvider
+from .providers.speech import MockSpeechProvider, ResilientSpeech
 from .providers.voice import MockVoiceVerifier
 
 STATIC = Path(__file__).parent / "static"
+
+
+def build_speech(settings: Settings, controls: MockControls):
+    """Gnani for the cook's voice when a key is configured (COOKSMART_SPEECH=auto|gnani|mock)."""
+    mock = MockSpeechProvider(controls)
+    if settings.speech == "mock" or (settings.speech == "auto" and not settings.gnani_api_key):
+        return mock
+    if not settings.gnani_api_key:
+        raise RuntimeError("COOKSMART_SPEECH=gnani needs GNANI_API_KEY")
+    gnani = GnaniSpeechProvider(settings.gnani_api_key, stt_url=settings.gnani_stt_url, tts_url=settings.gnani_tts_url,
+                                voice=settings.gnani_voice, model=settings.gnani_model)
+    return ResilientSpeech(gnani, mock, controls)
 
 
 def build_agent(settings: Settings, db: DB, controls: MockControls) -> Agent:
@@ -32,7 +47,8 @@ def build_agent(settings: Settings, db: DB, controls: MockControls) -> Agent:
     if settings.anthropic_api_key:
         claude_planner = ClaudePlanner(settings.anthropic_api_key, settings.model)
         claude_nlu = ClaudeNLU(settings.anthropic_api_key, settings.model)
-    return Agent(db, MockChannel(db), Planner(claude_planner), NLU(claude_nlu), MockSpeechProvider(controls),
+    speech = build_speech(settings, controls)
+    return Agent(db, MockChannel(db, speech), Planner(claude_planner), NLU(claude_nlu), speech,
                  MockGroceryProvider(controls), MockDispatchProvider(), MockPaymentProvider(controls),
                  MockVoiceVerifier())
 
@@ -140,6 +156,7 @@ def create_app(settings: Settings | None = None, db: DB | None = None) -> FastAP
                 "audit": repo.list_audit(db, hid), "memory": repo.list_memory(db, hid),
                 "controls": controls.as_dict(), "nlu_source": agent.nlu.last_source,
                 "planner": agent.planner.last_source if agent.planner.claude else "heuristic",
+                "speech": agent.speech.describe(),
                 "next": next_step(plan, repo.list_orders(db, hid)),
                 "scenario": ({k: v for k, v in scenarios.BY_ID[current[hid]].__dict__.items() if k in ("id", "title", "emoji", "blurb", "hint")} if hid in current else None)}
 
@@ -165,6 +182,30 @@ def create_app(settings: Settings | None = None, db: DB | None = None) -> FastAP
         need(hid)
         agent.handle_cook(hid, body.text, voice=body.voice)
         return {"ok": True}
+
+    MAX_VOICE_BYTES = 2_500_000
+
+    @app.post("/api/{hid}/cook/voice")
+    async def cook_voice(hid: str, request: Request):
+        """A recorded voice note from the cook (16 kHz mono WAV). The optional X-Transcript-Hint header carries
+        the browser's own transcript, used only when no speech service is configured."""
+        need(hid)
+        audio = await request.body()
+        if not audio:
+            raise HTTPException(400, "empty audio")
+        if len(audio) > MAX_VOICE_BYTES:
+            raise HTTPException(413, "voice note too long")
+        hint = unquote(request.headers.get("x-transcript-hint", "")) or None
+        agent.handle_cook_audio(hid, audio, request.headers.get("content-type", "audio/wav"), hint)
+        return {"ok": True}
+
+    @app.get("/api/{hid}/media/{media_id}")
+    def media(hid: str, media_id: int):
+        need(hid)
+        m = repo.get_media(db, hid, media_id)
+        if not m:
+            raise HTTPException(404, "no such media")
+        return Response(m["data"], media_type=m["mime"])
 
     @app.post("/api/{hid}/settings")
     def settings_route(hid: str, body: SettingsBody):
