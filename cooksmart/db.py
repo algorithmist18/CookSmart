@@ -105,6 +105,17 @@ CREATE TABLE IF NOT EXISTS media (
     mime TEXT NOT NULL,
     data BLOB NOT NULL
 );
+CREATE TABLE IF NOT EXISTS calls (
+    reference_id TEXT PRIMARY KEY,                   -- our clientReferenceId: household:plan:type:n
+    household_id TEXT NOT NULL,
+    plan_id INTEGER,
+    call_type TEXT NOT NULL,                         -- brief | reconcile
+    status TEXT NOT NULL,                            -- placed | processed | failed
+    conversation_id TEXT,                            -- Gnani's id, known once the webhook arrives
+    disposition TEXT,
+    payload TEXT,
+    created_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_msg ON messages (household_id, channel, id);
 """
 

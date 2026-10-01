@@ -28,6 +28,10 @@ class Settings:
     gnani_tts_url: str = "https://api.vachana.ai/api/v1/tts/inference"
     gnani_voice: str = "Nalini"
     gnani_model: str = "timbre-v2.5"
+    inya_platform_key: str = ""          # Agent Builder Platform API key (header x-api-key)
+    inya_bot_id: str = ""                # botId of the deployed cook-call agent
+    inya_environment: str = "development"
+    gnani_webhook_token: str = ""        # shared secret in the webhook/action URLs; endpoints are off without it
 
 
 def get_settings() -> Settings:
@@ -43,4 +47,8 @@ def get_settings() -> Settings:
         gnani_tts_url=os.environ.get("GNANI_TTS_URL", "https://api.vachana.ai/api/v1/tts/inference"),
         gnani_voice=os.environ.get("GNANI_VOICE", "Nalini"),
         gnani_model=os.environ.get("GNANI_MODEL", "timbre-v2.5"),
+        inya_platform_key=os.environ.get("INYA_PLATFORM_KEY", ""),
+        inya_bot_id=os.environ.get("INYA_BOT_ID", ""),
+        inya_environment=os.environ.get("INYA_ENVIRONMENT", "development"),
+        gnani_webhook_token=os.environ.get("GNANI_WEBHOOK_TOKEN", ""),
     )

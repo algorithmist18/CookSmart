@@ -129,6 +129,13 @@
   .note { color:var(--mut); font-size:12.5px; }
 
   main > * { min-width:0; }
+  .seg2 { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .seg2 button { background:transparent; color:var(--ink); border:0; padding:5px 10px; cursor:pointer; font:inherit; font-size:12.5px; }
+  .seg2 button.on { background:var(--accent); color:#fff; }
+  pre#kbView { white-space:pre-wrap; max-height:260px; overflow:auto; font:12.5px/1.5 system-ui,"Noto Sans Devanagari",sans-serif; margin:8px 0 0; padding:8px; border:1px solid var(--line); border-radius:8px; }
+  select { padding:4px 6px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink); font:inherit; max-width:100%; }
+  .chipx { display:inline-block; margin:2px 4px 2px 0; padding:1px 8px; border-radius:999px; background:var(--line); font-size:12px; }
+  .chipx.red { background:var(--warn); color:#fff; }
   @media (max-width: 1150px) { main { grid-template-columns:minmax(0,1fr); max-width:520px; width:100%; padding:10px; } .phone { height:640px; } }
 </style>
 </head>
@@ -196,6 +203,35 @@
       <button class="btn primary big" id="nextBtn">…</button>
       <div class="nextHint" id="nextHint"></div>
     </div>
+
+    <details class="card" open>
+      <summary>☎ Cook calls (Gnani voice agent)</summary>
+      <div class="sw"><span>Morning brief via:</span>
+        <span class="seg2" id="chanSeg"><button data-ch="chat">Voice note in chat</button><button data-ch="call">Gnani phone call</button></span></div>
+      <div class="sw" style="margin-top:8px"><input id="cookPhone" placeholder="cook's number, +91…" style="width:160px"><span class="note" id="callProv"></span></div>
+      <div id="callList" class="note" style="margin-top:8px">no calls yet</div>
+      <div class="sw" style="margin-top:8px"><select id="simKind">
+        <option value="brief_ok">✅ She confirmed the menu</option>
+        <option value="item_finished">🧾 She says an item is finished (confirmed)</option>
+        <option value="unconfirmed">🤔 She says it but doesn't confirm</option>
+        <option value="gas_problem">🔥 Gas problem (confirmed)</option>
+        <option value="cooker_problem">🫕 Cooker problem (confirmed)</option>
+        <option value="leave_tomorrow">🏖️ She can't come tomorrow</option>
+        <option value="safety">🚨 Safety issue (gas smell)</option>
+        <option value="no_answer">📵 No answer</option>
+        <option value="reconcile">🌙 End-of-day report</option></select>
+        <button class="btn" id="simBtn">Simulate the call result</button></div>
+      <div class="note" id="simRes" style="margin-top:6px"></div>
+    </details>
+
+    <details class="card">
+      <summary>🏠 Household profile &amp; the agent's knowledge base</summary>
+      <div class="btnrow" style="margin-top:0"><button class="btn" id="demoFamily">Load the demo family</button></div>
+      <div id="profileView" style="margin-top:8px"></div>
+      <div class="note" style="margin-top:8px">What the cook's Gnani agent is given. Daily facts (stock, use-by dates, who's eating) travel as call variables instead.</div>
+      <div class="sw" style="margin-top:6px"><select id="kbSel"></select></div>
+      <pre id="kbView">(open a document)</pre>
+    </details>
 
     <details class="card">
       <summary>🧪 Break things (mock rails)</summary>
@@ -455,6 +491,31 @@ function renderState(s) {
   document.querySelectorAll('[data-c]').forEach(e => { if (document.activeElement !== e) e.checked = !!c[e.dataset.c]; });
   document.querySelectorAll('[data-n]').forEach(e => { if (document.activeElement !== e) e.value = c[e.dataset.n]; });
   const oos = $('[data-oos]'); if (document.activeElement !== oos) oos.value = c.out_of_stock.join(',');
+  renderCalls(s);
+}
+
+let kbCache = null, kbKey = '';
+function renderCalls(s) {
+  const ch = (h => h.preferences.cook_channel || 'chat')(s.household);
+  document.querySelectorAll('#chanSeg button').forEach(b => b.classList.toggle('on', b.dataset.ch === ch));
+  if (document.activeElement !== $('#cookPhone')) $('#cookPhone').value = s.household.cook_phone || '';
+  $('#callProv').textContent = s.call_provider ? (s.call_provider.live ? '🟢 ' : '') + s.call_provider.calls : '';
+  $('#callList').innerHTML = s.calls.length ? s.calls.map(c => `${c.call_type} · <span class="tag ${c.status === 'failed' ? 'red' : ''}">${c.status}</span>${c.disposition ? ' · ' + c.disposition : ''}`).join('<br>') : 'no calls yet';
+  const prefs = s.household.preferences, ms = prefs.members || [];
+  const al = {peanut:'peanut', dairy:'dairy', egg:'egg', gluten:'gluten', chickpea:'chickpea'};
+  $('#profileView').innerHTML = ms.length ? ms.map(m => `<div><b>${esc(m.name)}</b> <span class="note">${esc(m.age_group || '')}</span> ${(m.allergies || []).map(a => `<span class="chipx red">allergic: ${al[a] || a}</span>`).join('')}${(m.health || []).length ? '<span class="chipx">has care instructions</span>' : ''}</div>`).join('') : '<span class="note">No household members saved yet. Try <b>Aarav is allergic to peanuts</b> in the owner chat, or load the demo family.</span>';
+  const key = JSON.stringify([prefs, s.household.family_size]);
+  if (key !== kbKey) { kbKey = key; loadKb(); }
+}
+async function loadKb() {
+  kbCache = await api(HID + '/gnani/kb');
+  const sel = $('#kbSel'), cur = sel.value;
+  sel.innerHTML = Object.keys(kbCache.files).map(n => `<option>${n}</option>`).join('') + `<option value="faqs.json">faqs.json (${kbCache.faqs.length} FAQs)</option>`;
+  if (cur) sel.value = cur; showKb();
+}
+function showKb() {
+  if (!kbCache) return; const v = $('#kbSel').value;
+  $('#kbView').textContent = v === 'faqs.json' ? JSON.stringify(kbCache.faqs, null, 2) : (kbCache.files[v] || '');
 }
 
 async function refresh() {
@@ -499,6 +560,18 @@ document.querySelectorAll('[data-n]').forEach(e => e.onchange = () => putControl
 $('[data-oos]').onchange = e => putControls({ out_of_stock: e.target.value.split(',').map(x => x.trim()).filter(Boolean) });
 $('#scenLoad').onclick = () => loadScenario(false);
 $('#scenPlay').onclick = () => loadScenario(true);
+
+document.querySelectorAll('#chanSeg button').forEach(b => b.onclick = () => api(HID + '/settings', { cook_channel: b.dataset.ch }).then(refresh));
+$('#cookPhone').onchange = e => api(HID + '/settings', { cook_phone: e.target.value }).then(refresh);
+$('#kbSel').onchange = showKb;
+$('#demoFamily').onclick = async () => { await api(HID + '/profile/demo', {}); await refresh(); };
+$('#simBtn').onclick = async () => {
+  const s = await api(HID + '/owner/state'), call = s.calls.find(c => c.status === 'placed');
+  if (!call) { $('#simRes').textContent = 'No call is waiting. Set "Gnani phone call" above, then run the nightly review and the morning step.'; return; }
+  const r = await api(`${HID}/calls/${encodeURIComponent(call.reference_id)}/simulate`, { kind: $('#simKind').value });
+  $('#simRes').textContent = r.duplicate ? 'Already processed.' : `Applied ${r.applied ?? 0} confirmed item(s); ${r.not_applied ?? 0} not applied (unconfirmed).`;
+  refresh();
+};
 
 (async function init() {
   await api('households', { id: HID });

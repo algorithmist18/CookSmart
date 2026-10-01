@@ -13,7 +13,7 @@ flow runs locally with no accounts. Real providers can be swapped in later witho
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python -m cooksmart            # open http://127.0.0.1:8000
-python -m pytest               # 155 tests, fully offline
+python -m pytest               # 237 tests, fully offline
 ```
 
 Optional: `cp .env.example .env` and add `ANTHROPIC_API_KEY` so Claude plans menus and parses the cook's
@@ -61,6 +61,24 @@ GNANI_TTS_URL=http://127.0.0.1:8801/api/v1/tts/inference python -m cooksmart    
 The request shapes follow Gnani's published curl examples. The response bodies were not in those examples,
 so they are parsed defensively; if a real reply is not understood, the audit log (`stt` event, field `raw`)
 shows exactly what came back.
+
+## The agent that phones the cook (Gnani Agent Builder)
+
+Instead of a chat message, a Gnani voice agent can **phone the cook**. Choose *Gnani phone call* in the
+*Cook calls* panel (or say `call the cook`). It runs offline with a mock caller; add `INYA_PLATFORM_KEY` and
+`INYA_BOT_ID` for real calls. Full setup: [`gnani/README.md`](gnani/README.md).
+
+The cook knows the recipes, so the agent tells her what she can't know:
+
+* **Every call (variables):** what to use first and why (use-by dates), taste tips for ageing ingredients, a
+  health note, who is eating, house style, and **allergies, said aloud every time**.
+* **Knowledge base (generated per household):** the family as cooking instructions (never diagnoses), allergy and
+  hidden-allergen detail, taste and customs, ingredient care and how to use ageing food, health notes, kitchen
+  setup and emergencies, boundaries, units. See the panel *Household profile & the agent's knowledge base*.
+* **After the call:** a webhook applies only what she *confirmed*; the rest is shown to you and left alone.
+  A confirmed gas problem switches the meal; no answer falls back to a voice note; a safety issue alerts you.
+
+Allergies are a hard rule: `Aarav is allergic to peanuts` filters every menu and blocks any dish you request.
 
 ## Things to try
 

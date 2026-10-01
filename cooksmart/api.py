@@ -3,6 +3,7 @@ Meta-format WhatsApp webhook so the real channel can be swapped in later."""
 from __future__ import annotations
 
 import datetime as dt
+import hmac
 from pathlib import Path
 
 from urllib.parse import unquote
@@ -11,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 
+from . import callresult, gnani_kb
 from . import inventory as inv
 from . import repo, scenarios
 from .agent import Agent
@@ -23,7 +25,9 @@ from .providers.controls import MockControls
 from .providers.dispatch import MockDispatchProvider
 from .providers.grocery import MockGroceryProvider
 from .providers.payment import MockPaymentProvider
+from .providers.calls import GnaniCallProvider, MockCallProvider
 from .providers.gnani import GnaniSpeechProvider
+from .providers.gnani_platform import GnaniPlatform
 from .providers.speech import MockSpeechProvider, ResilientSpeech
 from .providers.voice import MockVoiceVerifier
 
@@ -42,6 +46,13 @@ def build_speech(settings: Settings, controls: MockControls):
     return ResilientSpeech(gnani, mock, controls)
 
 
+def build_caller(settings: Settings):
+    """The Gnani voice agent that phones the cook, or a mock that records the call."""
+    if settings.inya_platform_key and settings.inya_bot_id:
+        return GnaniCallProvider(GnaniPlatform(settings.inya_platform_key), settings.inya_bot_id, settings.inya_environment)
+    return MockCallProvider()
+
+
 def build_agent(settings: Settings, db: DB, controls: MockControls) -> Agent:
     claude_planner = claude_nlu = None
     if settings.anthropic_api_key:
@@ -50,7 +61,7 @@ def build_agent(settings: Settings, db: DB, controls: MockControls) -> Agent:
     speech = build_speech(settings, controls)
     return Agent(db, MockChannel(db, speech), Planner(claude_planner), NLU(claude_nlu), speech,
                  MockGroceryProvider(controls), MockDispatchProvider(), MockPaymentProvider(controls),
-                 MockVoiceVerifier())
+                 MockVoiceVerifier(), build_caller(settings))
 
 
 class TextBody(BaseModel):
@@ -61,6 +72,13 @@ class TextBody(BaseModel):
 class SettingsBody(BaseModel):
     order_mode: str | None = None
     auto_cap: int | None = None
+    cook_channel: str | None = None       # "chat" | "call"
+    cook_phone: str | None = None
+
+
+class SimulateBody(BaseModel):
+    kind: str = "brief_ok"
+    item: str | None = None
 
 
 class HouseholdBody(BaseModel):
@@ -157,6 +175,7 @@ def create_app(settings: Settings | None = None, db: DB | None = None) -> FastAP
                 "controls": controls.as_dict(), "nlu_source": agent.nlu.last_source,
                 "planner": agent.planner.last_source if agent.planner.claude else "heuristic",
                 "speech": agent.speech.describe(),
+                "calls": repo.list_calls(db, hid), "call_provider": agent.caller.describe() if agent.caller else None,
                 "next": next_step(plan, repo.list_orders(db, hid)),
                 "scenario": ({k: v for k, v in scenarios.BY_ID[current[hid]].__dict__.items() if k in ("id", "title", "emoji", "blurb", "hint")} if hid in current else None)}
 
@@ -209,9 +228,78 @@ def create_app(settings: Settings | None = None, db: DB | None = None) -> FastAP
 
     @app.post("/api/{hid}/settings")
     def settings_route(hid: str, body: SettingsBody):
-        need(hid)
+        h = need(hid)
         agent.set_settings(hid, body.order_mode, body.auto_cap)
+        if body.cook_channel in ("chat", "call"):
+            repo.update_household(db, hid, preferences={**h["preferences"], "cook_channel": body.cook_channel})
+            repo.audit(db, hid, "cook_channel", channel=body.cook_channel)
+        if body.cook_phone is not None:
+            repo.update_household(db, hid, cook_phone=body.cook_phone.strip() or None)
         return {"ok": True}
+
+    # ---- Gnani cook-call agent: webhook, live action, dynamic message. Off unless GNANI_WEBHOOK_TOKEN is set.
+    def check_token(token: str) -> None:
+        if not settings.gnani_webhook_token:
+            raise HTTPException(503, "Gnani endpoints are disabled: set GNANI_WEBHOOK_TOKEN")
+        if not hmac.compare_digest(token or "", settings.gnani_webhook_token):
+            raise HTTPException(401, "bad token")
+
+    @app.post("/gnani/webhook/call-ended")
+    async def gnani_webhook(request: Request, token: str = ""):
+        check_token(token)
+        try:
+            payload = await request.json()
+        except ValueError:
+            raise HTTPException(400, "body must be JSON")
+        return agent.handle_call_result(payload)       # always 2xx for a known call; Gnani retries on errors
+
+    @app.post("/gnani/action/{hid}/cook-problem")
+    async def gnani_cook_problem(hid: str, request: Request, token: str = ""):
+        check_token(token)
+        need(hid)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        args = body.get("arguments", body) if isinstance(body, dict) else {}
+        reason = str(args.get("problem") or args.get("reason") or args.get("type") or "").lower()
+        text = agent.live_cook_problem(hid, reason, args.get("item"))
+        return {"text": text, "additional_info": {"inya_data": {"text": text, "user_context": {}}}}
+
+    @app.api_route("/gnani/dynamic/{hid}/brief", methods=["GET", "POST"])
+    def gnani_dynamic(hid: str, token: str = ""):
+        check_token(token)
+        need(hid)
+        d = agent.dynamic_brief(hid)
+        return {"additional_info": {"inya_data": {"text": d["text"], "user_context": d["user_context"]}}}
+
+    @app.get("/api/{hid}/gnani/kb")
+    def gnani_kb_view(hid: str):
+        """The knowledge base this household's Gnani agent would be given (also written by `gnani_cli kb`)."""
+        h = need(hid)
+        return {"files": gnani_kb.build_docs(h["preferences"], h["family_size"]),
+                "faqs": gnani_kb.build_faqs(h["preferences"])}
+
+    @app.post("/api/{hid}/profile/demo")
+    def load_demo_family(hid: str):
+        h = need(hid)
+        demo = {k: v for k, v in gnani_kb.DEMO_PROFILE.items() if k != "diet"}
+        repo.update_household(db, hid, preferences={**h["preferences"], **demo})
+        repo.audit(db, hid, "demo_family_loaded")
+        return {"ok": True}
+
+    @app.post("/api/{hid}/calls/{ref:path}/simulate")
+    def simulate_call(hid: str, ref: str, body: SimulateBody):
+        """Feed a Gnani-shaped webhook through the real handler, so the whole loop can be tried without telephony."""
+        need(hid)
+        call = repo.get_call(db, ref)
+        if not call or call["household_id"] != hid:
+            raise HTTPException(404, "unknown call")
+        plan = repo.latest_plan(db, hid)
+        menu = list(inv.needs_for(plan["chosen"])) if plan and plan["chosen"] else []
+        stocked = [i["name"] for i in inv.list_items(db, hid) if i["qty"] > 0]
+        items = [body.item] if body.item else callresult.pick_items(body.kind, menu, stocked)
+        return agent.handle_call_result(callresult.simulated_payload(body.kind, call, items))
 
     # ---- scenarios
     @app.get("/api/scenarios")

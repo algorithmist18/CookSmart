@@ -10,12 +10,14 @@ from __future__ import annotations
 import datetime as dt
 import random
 
-from . import cookmsgs, guards, repo
+from . import callresult, cookbrief, cookmsgs, guards, repo
 from . import inventory as inv
 from .channels import MessageChannel
 from .db import DB
 from .nlu import NLU
+from . import profile as prof
 from .planner import PlanContext, Planner
+from .providers.calls import CallProvider, CallRequest
 from .providers.dispatch import DispatchProvider
 from .providers.grocery import GroceryProvider
 from .providers.payment import PaymentProvider
@@ -59,10 +61,11 @@ def _flat(proposals: list[dict], picks: list[int]) -> list[str]:
 class Agent:
     def __init__(self, db: DB, channel: MessageChannel, planner: Planner, nlu: NLU, speech: SpeechProvider,
                  grocery: GroceryProvider, dispatch: DispatchProvider, payment: PaymentProvider,
-                 voice: VoiceVerifier):
+                 voice: VoiceVerifier, caller: CallProvider | None = None):
         self.db, self.channel, self.planner, self.nlu = db, channel, planner, nlu
         self.speech, self.grocery, self.dispatch = speech, grocery, dispatch
         self.payment, self.voice = payment, voice
+        self.caller = caller          # the Gnani voice agent that phones the cook; None = chat only
 
     # ------------------------------------------------------------------ helpers
     def _h(self, hid: str) -> dict:
@@ -203,6 +206,8 @@ class Agent:
             return self._owner_flags(hid, a["flags"])
         if act == "prefs":
             return self._owner_prefs(hid, a["prefs"])
+        if act == "profile":
+            return self._owner_profile(hid, a)
         if act == "redo":
             return self._redo(hid)
         if act == "confirm_all":
@@ -260,6 +265,26 @@ class Agent:
         repo.update_household(self.db, hid, preferences=prefs)
         repo.audit(self.db, hid, "flags_saved_for_next_plan", flags=flags)
         self._say(hid, f"📌 Noted for tomorrow night's plan: {said}.")
+
+    def _owner_profile(self, hid: str, a: dict) -> None:
+        h = self._h(hid)
+        prefs = dict(h["preferences"])
+        said = []
+        for name, group in a.get("allergies", []):
+            prefs = prof.with_allergy(prefs, name, group)
+            said.append(f"{name.title()} is allergic to {group}: I'll never plan it and the cook will be warned")
+        if a.get("style"):
+            prefs["style"] = {**prefs.get("style", {}), **a["style"]}
+            said.append("cooking style: " + ", ".join(f"{k} {v}" for k, v in a["style"].items()))
+        if a.get("cook_channel"):
+            prefs["cook_channel"] = a["cook_channel"]
+            said.append("I'll " + ("phone the cook" if a["cook_channel"] == "call" else "message the cook") + " each morning")
+        repo.update_household(self.db, hid, preferences=prefs)
+        repo.audit(self.db, hid, "profile_changed", change={k: v for k, v in a.items() if k != "action"})
+        plan = repo.latest_plan(self.db, hid)
+        if a.get("allergies") and self._upcoming(self._h(hid), plan) and plan["state"] == "review":
+            return self._replan(hid, plan["id"], "🛡️ Saved: " + "; ".join(said) + ". Re-planned:")
+        self._say(hid, "🛡️ Saved: " + "; ".join(said) + ".")
 
     def _owner_prefs(self, hid: str, prefs_in: dict) -> None:
         h = self._h(hid)
@@ -333,6 +358,14 @@ class Agent:
 
     # ------------------------------------------------------------------ S3
     def _choose(self, hid: str, plan: dict, ids: list[str], reviewed: bool) -> None:
+        conflicts = prof.allergen_conflicts(ids, self._h(hid)["preferences"])
+        if conflicts:                                     # a hard stop, not a warning
+            c = conflicts[0]
+            self._say(hid, f"🚫 I won't plan *{RECIPES[c['recipe']]['name']}*: it has {c['item']} and "
+                           f"{', '.join(c['who'])} is allergic ({c['group']}). Pick another option, or update the "
+                           "allergy first if it's wrong.")
+            repo.audit(self.db, hid, "allergy_block", conflicts=conflicts)
+            return
         plan = repo.update_plan(self.db, hid, plan["id"], chosen=ids, reviewed=reviewed, offer=None)
         repo.audit(self.db, hid, "menu_chosen", plan=plan["id"], dishes=ids, reviewed=reviewed)
         self._say(hid, f"👍 Got it: *{_names(ids)}*. Checking the kitchen...")
@@ -586,6 +619,8 @@ class Agent:
             self._cook_say(hid, cookmsgs.render("no_menu", lang))
             self._say(hid, "😟 The cook arrived but there is no menu I can stand behind. Please decide today's meal.")
             return plan
+        if self._call_enabled(h) and self._place_call(hid, plan, "brief", start, wait):
+            return repo.update_plan(self.db, hid, plan["id"], state="briefed", brief={"start": start, "wait": wait})
         self._cook_say(hid, self._compose_brief(lang, plan["chosen"], start, wait, switched))
         plan = repo.update_plan(self.db, hid, plan["id"], state="briefed", brief={"start": start, "wait": wait})
         repo.audit(self.db, hid, "cook_briefed", plan=plan["id"], start=start, wait=wait)
@@ -741,7 +776,7 @@ class Agent:
         self._say(hid, "🏖️ The cook says she can't come tomorrow.")
         self._owner_flags(hid, {"cook_off": True})
 
-    def _apply_cook_intents(self, hid: str, plan: dict, intents: list[dict]) -> None:
+    def _apply_cook_intents(self, hid: str, plan: dict, intents: list[dict], notify_cook: bool = True) -> None:
         h = self._h(hid)
         day = h["sim_date"]
         report = dict(plan["report"])
@@ -773,12 +808,16 @@ class Agent:
                              "time": "short on time"}.get(problem, "cannot cook"))
         plan = repo.update_plan(self.db, hid, plan["id"], pending=None, report=report)
         repo.audit(self.db, hid, "cook_update_applied", intents=intents)
-        self._cook_say(hid, cookmsgs.render("noted", h["cook_language"]))
+        if notify_cook:
+            self._cook_say(hid, cookmsgs.render("noted", h["cook_language"]))
         self._say(hid, "👩‍🍳 *Cook update:* " + "; ".join(said) + ".")
         if plan["state"] == "closing":
             return
         if problem:
-            return self._switch_dish(hid, plan, problem)
+            if self._problem_applies(plan, problem):      # the live call action may already have switched the dish
+                return self._switch_dish(hid, plan, problem)
+            return
+
         if changed and plan["state"] == "briefed":
             avail = inv.available(self.db, hid, h["sim_date"], plan["day"])
             if inv.gaps(inv.needs_for(plan["chosen"], self._scale(plan)), avail):
@@ -813,7 +852,10 @@ class Agent:
         if not plan or plan["state"] not in ("briefed", "ready", "ordered"):
             return
         repo.update_plan(self.db, hid, plan["id"], state="closing")
-        self._cook_say(hid, cookmsgs.render("eod", self._h(hid)["cook_language"]))
+        h = self._h(hid)
+        if self._call_enabled(h) and self._place_call(hid, plan, "reconcile", plan["chosen"], []):
+            return
+        self._cook_say(hid, cookmsgs.render("eod", h["cook_language"]))
         self._say(hid, "🌙 Asked the cook what was used today. I'll reconcile stock from her answer.")
 
     def close_day(self, hid: str) -> dict | None:
@@ -838,6 +880,119 @@ class Agent:
                     " and flagged them to re-confirm tonight, since the cook didn't report them.")
         self._say(hid, msg)
         return plan
+
+    # ------------------------------------------------------------------ Gnani voice agent: phone calls to the cook
+    def _call_enabled(self, h: dict) -> bool:
+        return self.caller is not None and h["preferences"].get("cook_channel") == "call"
+
+    def _call_brief(self, hid: str, plan: dict, call_type: str, start, wait) -> cookbrief.CookBriefData:
+        h = self._h(hid)
+        return cookbrief.build(self.db, hid, h, plan, call_type=call_type, start=start, wait=wait,
+                               order_coming=plan["state"] == "ordered")
+
+    def _place_call(self, hid: str, plan: dict, call_type: str, start, wait) -> bool:
+        """Phone the cook. Returns False (and the caller falls back to a chat message) if it can't be placed,
+        so she is never left waiting."""
+        h = self._h(hid)
+        live = bool(self.caller.describe().get("live"))
+        phone = h["cook_phone"] or (None if live else "+91-demo")
+        if not phone:
+            self._say(hid, "📵 I can't phone the cook: her number isn't saved. I'll message her instead.")
+            return False
+        brief = self._call_brief(hid, plan, call_type, start, wait)
+        row = repo.add_call(self.db, hid, plan["id"], call_type)
+        try:
+            self.caller.start_call(CallRequest(hid, row["reference_id"], call_type, phone, cookbrief.to_variables(brief)))
+        except Exception as e:
+            repo.update_call(self.db, row["reference_id"], status="failed", payload={"error": str(e)[:300]})
+            repo.audit(self.db, hid, "call_failed", error=str(e)[:300], call=row["reference_id"])
+            self._say(hid, f"📵 I couldn't place the call ({str(e)[:120]}). Messaging the cook instead so she isn't left waiting.")
+            return False
+        repo.audit(self.db, hid, "call_placed", call=row["reference_id"], type=call_type)
+        what = "today's brief" if call_type == "brief" else "an end-of-day check on what was used"
+        self._say(hid, f"📞 *Calling the cook* with {what}.\n" + (cookbrief.spoken_summary(brief) if call_type == "brief" else ""))
+        return True
+
+    def _chat_brief(self, hid: str, plan: dict) -> None:
+        lang = self._h(hid)["cook_language"]
+        b = plan["brief"] or {"start": plan["chosen"], "wait": []}
+        self._cook_say(hid, self._compose_brief(lang, plan["chosen"], b["start"], b["wait"]))
+
+    def _problem_applies(self, plan: dict, reason: str) -> bool:
+        """Is the reported problem still a problem for the chosen dishes? (False once a switch already happened.)"""
+        rs = [RECIPES[r] for r in plan["chosen"]]
+        return {"stove": any(r["stove"] for r in rs), "cooker": any("cooker" in r["tools"] for r in rs),
+                "time": any(r["prep"] > 30 for r in rs)}.get(reason, True)
+
+    def handle_call_result(self, payload: dict) -> dict:
+        """Post-call webhook from the Gnani agent. Idempotent on conversation_id. Only what the cook CONFIRMED
+        on the call is applied; the rest is shown to the owner and left alone."""
+        oc = callresult.parse_webhook(payload)
+        row = repo.find_call(self.db, reference_id=oc.reference_id, conversation_id=oc.conversation_id)
+        if not row:
+            return {"ok": False, "ignored": "unknown call"}
+        if row["status"] == "processed":
+            return {"ok": True, "duplicate": True}
+        hid = row["household_id"]
+        repo.update_call(self.db, row["reference_id"], status="processed", conversation_id=oc.conversation_id,
+                         disposition=oc.disposition, payload={k: v for k, v in payload.items() if k != "transcript"})
+        plan = repo.get_plan(self.db, hid, row["plan_id"]) or repo.latest_plan(self.db, hid)
+        repo.audit(self.db, hid, "call_result", call=row["reference_id"], disposition=oc.disposition,
+                   ignored=oc.ignored)
+        def alert() -> None:                 # last message in the chat, so it can't be buried under routine updates
+            if oc.safety_issue:
+                self._say(hid, "🚨 *The cook reported a safety issue on the call* "
+                               f"({oc.notes or 'no details'}). Please call her right now.")
+
+        if oc.no_answer:
+            self._say(hid, "📵 The cook didn't pick up the call. I've sent her the brief as a voice note instead.")
+            if row["call_type"] == "brief":
+                self._chat_brief(hid, plan)
+            alert()
+            return {"ok": True, "fallback": "chat"}
+
+        confirmed, unconfirmed = callresult.to_intents(oc)
+        if oc.acknowledged and row["call_type"] == "brief" and not oc.safety_issue:
+            self._say(hid, "👍 The cook confirmed today's menu on the call.")
+        if unconfirmed:
+            self._say(hid, "⚠️ Not applied (she didn't confirm): " +
+                      "; ".join(f"{i.get('item') or i.get('reason')} ({i['type']})" for i in unconfirmed) +
+                      ". I'll leave stock as it is until it's confirmed.")
+        if confirmed:
+            self._apply_cook_intents(hid, plan, confirmed, notify_cook=False)
+        if oc.leave_tomorrow:
+            self._owner_flags(hid, {"cook_off": True})
+        if row["call_type"] == "reconcile":
+            self.close_day(hid)
+        alert()
+        return {"ok": True, "applied": len(confirmed), "not_applied": len(unconfirmed)}
+
+    def live_cook_problem(self, hid: str, reason: str, item: str | None = None) -> str:
+        """On-call action: the cook confirmed a problem on the phone; switch today's dish and return what the
+        agent should say next (in Hindi)."""
+        plan = repo.latest_plan(self.db, hid)
+        if not plan or plan["state"] not in ("briefed", "ready", "ordered") or not plan["chosen"]:
+            return "मैं मैडम/सर से पूछकर बताती हूँ।"
+        if reason not in ("stove", "cooker", "time", "ingredient"):
+            return "मैं मैडम/सर से पूछकर बताती हूँ।"
+        before = list(plan["chosen"])
+        if reason == "ingredient" and item in ITEMS:
+            inv.set_qty(self.db, hid, item, 0, self._h(hid)["sim_date"])
+            repo.audit(self.db, hid, "live_ingredient_gone", item=item)
+        self._switch_dish(hid, plan, reason)
+        plan = repo.latest_plan(self.db, hid)
+        if plan["chosen"] == before:
+            return "आज के लिए कोई दूसरा विकल्प नहीं मिला। मैं मैडम/सर को बता देती हूँ।"
+        return f"ठीक है, आज {cookmsgs.dish_names(plan['chosen'])} बनाइए।"
+
+    def dynamic_brief(self, hid: str) -> dict:
+        """Dynamic-message endpoint (Gnani calls us, 10 s timeout): always the freshest brief, never stale."""
+        plan = repo.latest_plan(self.db, hid)
+        if not plan or not plan["chosen"]:
+            return {"text": "आज का मेन्यू अभी तय नहीं है। मैं मैडम/सर से पूछकर बताती हूँ।", "user_context": {}}
+        b = plan["brief"] or {"start": plan["chosen"], "wait": []}
+        brief = self._call_brief(hid, plan, "brief", b["start"], b["wait"])
+        return {"text": cookbrief.spoken_summary(brief), "user_context": cookbrief.to_variables(brief)}
 
     # ------------------------------------------------------------------ settings
     def set_settings(self, hid: str, order_mode: str | None = None, auto_cap: int | None = None) -> None:

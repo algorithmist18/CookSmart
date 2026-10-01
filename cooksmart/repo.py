@@ -41,7 +41,7 @@ def find_household_by_phone(db: DB, phone: str) -> tuple[dict, str] | None:
 
 def wipe_household_data(db: DB, hid: str) -> None:
     """Scenario reset: delete everything the household has accumulated (keeps the household row)."""
-    for table in ("inventory", "meals", "plans", "orders", "messages", "audit", "memory"):
+    for table in ("inventory", "meals", "plans", "orders", "messages", "audit", "memory", "calls"):
         db.execute(f"DELETE FROM {table} WHERE household_id=?", (hid,))
 
 
@@ -179,3 +179,38 @@ def add_media(db: DB, hid: str, key: str, mime: str, data: bytes) -> int:
 
 def get_media(db: DB, hid: str, media_id: int) -> dict | None:
     return db.one("SELECT mime, data FROM media WHERE household_id=? AND id=?", (hid, media_id))
+
+
+# ---------- cook phone calls (Gnani agent) ----------
+def add_call(db: DB, hid: str, plan_id: int, call_type: str, status: str = "placed") -> dict:
+    n = db.one("SELECT COUNT(*) AS n FROM calls WHERE household_id=?", (hid,))["n"] + 1
+    ref = f"{hid}:{plan_id}:{call_type}:{n}"
+    db.execute("INSERT INTO calls (reference_id, household_id, plan_id, call_type, status, created_at) VALUES (?,?,?,?,?,?)",
+               (ref, hid, plan_id, call_type, status, now_iso()))
+    return get_call(db, ref)
+
+
+def get_call(db: DB, ref: str) -> dict | None:
+    return db.one("SELECT * FROM calls WHERE reference_id=?", (ref,))
+
+
+def find_call(db: DB, *, reference_id: str | None = None, conversation_id: str | None = None) -> dict | None:
+    if reference_id:
+        row = get_call(db, reference_id)
+        if row:
+            return row
+    if conversation_id:
+        return db.one("SELECT * FROM calls WHERE conversation_id=?", (conversation_id,))
+    return None
+
+
+def update_call(db: DB, ref: str, **fields) -> None:
+    if "payload" in fields and not isinstance(fields["payload"], str):
+        fields["payload"] = json.dumps(fields["payload"], default=str, ensure_ascii=False)
+    sets = ", ".join(f"{k}=?" for k in fields)
+    db.execute(f"UPDATE calls SET {sets} WHERE reference_id=?", (*fields.values(), ref))
+
+
+def list_calls(db: DB, hid: str, limit: int = 10) -> list[dict]:
+    return db.query("SELECT reference_id, call_type, status, disposition, conversation_id, created_at FROM calls "
+                    "WHERE household_id=? ORDER BY created_at DESC LIMIT ?", (hid, limit))

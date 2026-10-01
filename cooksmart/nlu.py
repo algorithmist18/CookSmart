@@ -236,6 +236,29 @@ def parse_owner(text: str) -> dict:
     if low in ("help", "?", "menu help", "what can you do"):
         return {"action": "help"}
 
+    # household profile: allergies, taste, how the cook should reach her
+    m = re.search(r"\b([a-z\u0900-\u097F]+)\s+(?:is\s+|are\s+)?allergic\s+to\s+([a-z\u0900-\u097F ,&]+)", low)
+    if m:
+        from .profile import group_for
+        words = [w for w in re.split(r"[ ,&]+|\band\b", m.group(2)) if w]
+        groups = [g for g in (group_for(w) for w in words) if g]
+        if groups:
+            return {"action": "profile", "allergies": [(m.group(1), g) for g in dict.fromkeys(groups)]}
+    style: dict = {}
+    m = re.search(r"\bspice\s*(?:level)?\s*[:=]?\s*(mild|medium|hot)\b", low) or re.search(r"\b(mild|medium|hot)\s+spice\b", low)
+    if m:
+        style["spice"] = m.group(1)
+    for key in ("oil", "salt", "sugar"):
+        m = re.search(rf"\b(less|low|reduce|kam)\s+{key}\b", low)
+        if m:
+            style[key] = "low"
+    if style:
+        return {"action": "profile", "style": style}
+    if re.search(r"\b(call|phone|ring)\s+(the\s+)?cook\b", low):
+        return {"action": "profile", "cook_channel": "call"}
+    if re.search(r"\b(message|whatsapp|text)\s+(the\s+)?cook\b", low) and not re.search(r"^(tell|ask)", low):
+        return {"action": "profile", "cook_channel": "chat"}
+
     # per-day flags and household preferences
     flags: dict = {}
     m = re.search(r"\b(\d+)\s*(?:guests?|mehman|people extra|extra)\b", low) or re.search(r"\bguests?\s*[:=]?\s*(\d+)", low)

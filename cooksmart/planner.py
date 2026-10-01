@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 from . import inventory as inv
 from .nlu import find_items, norm, tokens
+from .profile import allergy_items
 from .recipes import DAIRY, ITEMS, JAIN_BANNED, RECIPES, fmt_qty
 
 LIGHT_WORDS = {"light", "lighter", "halka", "halki", "healthy", "healthier", "diet"}
@@ -60,6 +61,10 @@ class Proposals:
 # ---------------------------------------------------------------- rules
 def _excluded_items(ctx: PlanContext) -> set[str]:
     out = {norm(i) for i in ctx.preferences.get("dislikes", [])}
+    weekday = dt.date.fromisoformat(ctx.cook_day).strftime("%A").lower()
+    for c in ctx.preferences.get("customs", []):          # e.g. "no onion or garlic on Tuesdays"
+        if isinstance(c, dict) and c.get("weekday", "").lower() == weekday:
+            out |= set(c.get("avoid", []))
     for fb in ctx.feedback:
         toks = tokens(fb)
         if {"no", "not", "nahi", "without", "avoid", "नहीं"} & set(toks):
@@ -71,6 +76,8 @@ def allowed(rid: str, ctx: PlanContext) -> bool:
     """Hard filters: diet, fasting, allergies, broken appliances, time, cook off."""
     r = RECIPES[rid]
     needs = set(r["needs"])
+    if needs & allergy_items(ctx.preferences):         # someone here reacts to it: never, whatever else is true
+        return False
     diet = ctx.preferences.get("diet", "vegetarian")
     if r["diet"] == "nonveg" and diet != "nonveg":
         return False

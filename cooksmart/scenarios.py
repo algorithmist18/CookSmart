@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from . import inventory as inv
 from . import repo
 from .db import DB
+from .gnani_kb import DEMO_PROFILE
+from . import callresult
 from .providers.controls import MockControls
 from .recipes import RECIPES
 
@@ -169,6 +171,36 @@ SCENARIOS: list[Scenario] = [
              script=[("trigger", "nightly_review"), ("owner", "palak paneer"), ("owner", "approve", "state:approval"),
                      ("trigger", "morning"), ("door", "stranger", "open_order"), ("otp",)]),
 ]
+FAMILY = {k: v for k, v in DEMO_PROFILE.items() if k not in ("diet",)} | {"diet": "vegetarian"}
+CALL_FAMILY = FAMILY | {"cook_channel": "call"}
+
+SCENARIOS += [
+    Scenario("allergy_family", "A child with a peanut allergy", "🥜",
+             "Aarav (8) is allergic to peanuts; Papa needs less salt and sugar; Dadi needs soft food.",
+             "Try asking for *poha*: it's blocked (it has peanuts). Every option avoids peanuts, and the cook is warned every time.",
+             prefs=FAMILY, script=[("trigger", "nightly_review"), ("owner", "poha"), ("owner", "1")]),
+    Scenario("morning_call", "The agent phones the cook", "📞",
+             "Instead of a chat message, the Gnani voice agent calls the cook with today's brief: what to use first, "
+             "taste tips, allergy cautions. (Simulated here: no real call is placed.)",
+             "Watch the call appear in *Cook calls*, then use *Simulate the call result* to see what she reported.",
+             prefs=CALL_FAMILY, script=[("trigger", "nightly_review"), ("owner", "palak dal and roti"), ("trigger", "morning"),
+                                        ("call_result", "item_finished"), ("trigger", "end_of_day"), ("call_result", "reconcile")]),
+    Scenario("call_gas_problem", "She reports a gas problem on the call", "☎️",
+             "The cook tells the voice agent the gas isn't working and confirms it.",
+             "The meal is switched to a no-stove one, and the owner is told. Nothing is applied that she didn't confirm.",
+             prefs=CALL_FAMILY, script=[("trigger", "nightly_review"), ("owner", "dal tadka"), ("trigger", "morning"),
+                                        ("call_result", "gas_problem")]),
+    Scenario("call_unanswered", "The cook doesn't pick up", "📵",
+             "The call rings out. The agent falls back to a voice note so she isn't left waiting.",
+             "The same brief arrives in the cook's chat.",
+             prefs=CALL_FAMILY, script=[("trigger", "nightly_review"), ("owner", "dal tadka"), ("trigger", "morning"),
+                                        ("call_result", "no_answer")]),
+    Scenario("call_unconfirmed", "She mentions something but doesn't confirm", "🤔",
+             "She says paneer is finished, but the line cuts before she confirms the read-back.",
+             "Stock is left alone and the owner is told it wasn't applied.",
+             prefs=CALL_FAMILY, script=[("trigger", "nightly_review"), ("owner", "dal tadka"), ("trigger", "morning"),
+                                        ("call_result", "unconfirmed")]),
+]
 BY_ID = {s.id: s for s in SCENARIOS}
 
 
@@ -233,3 +265,12 @@ def play(agent, db: DB, controls: MockControls, hid: str, script: list) -> None:
                 agent.door_otp(hid, order["otp"])
         elif kind == "controls":
             controls.update(args[0])
+        elif kind == "call_result":                      # a Gnani-shaped webhook through the real handler
+            call = next((c for c in repo.list_calls(db, hid, 20) if c["status"] == "placed"), None)
+            plan = repo.latest_plan(db, hid)
+            if call:
+                menu = list(inv.needs_for(plan["chosen"])) if plan and plan["chosen"] else []
+                stocked = [i["name"] for i in inv.list_items(db, hid) if i["qty"] > 0]
+                full = repo.get_call(db, call["reference_id"])
+                agent.handle_call_result(callresult.simulated_payload(args[0], full,
+                                                                      callresult.pick_items(args[0], menu, stocked)))

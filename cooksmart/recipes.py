@@ -92,6 +92,17 @@ ALIASES: dict[str, list[str]] = {
 }
 
 DAIRY = {"milk", "curd", "paneer", "cream"}
+
+# Allergen groups over the ingredients CookSmart tracks. Hidden sources matter: besan IS chickpea, bread IS wheat.
+ALLERGENS: dict[str, dict] = {
+    "peanut": dict(items={"peanuts"}, hi="मूंगफली", aliases=["peanut", "peanuts", "moongfali", "मूंगफली"]),
+    "dairy": dict(items=set(DAIRY), hi="दूध और दूध से बनी चीज़ें (दही, पनीर, क्रीम)",
+                  aliases=["dairy", "milk", "doodh", "lactose", "दूध"]),
+    "egg": dict(items={"egg"}, hi="अंडा", aliases=["egg", "eggs", "anda", "अंडा"]),
+    "gluten": dict(items={"atta", "suji", "bread"}, hi="गेहूं (आटा, सूजी, ब्रेड)",
+                   aliases=["gluten", "wheat", "gehun", "गेहूं"]),
+    "chickpea": dict(items={"besan", "chana"}, hi="चना (बेसन, छोले)", aliases=["chickpea", "chana", "besan", "छोले"]),
+}
 JAIN_BANNED = {"onion", "potato", "carrot"}      # root vegetables
 MEAT = {"chicken"}
 

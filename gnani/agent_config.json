@@ -1,0 +1,22 @@
+{
+  "_comment": "Indicative body for POST /v1/agents. Field names follow the Gnani knowledge file but were summarised, not copied: if Gnani answers 400, the message names the field to fix. Valid languages/ASR/TTS/LLM come from the config endpoints (fill the TODO values from them).",
+  "name": "CookSmart Rasoi Sahayak",
+  "type": "voice",
+  "languages": ["hi-IN"],
+  "region": "TODO: from GET config/regions",
+  "timezone": "Asia/Kolkata",
+  "greeting": "नमस्ते {{ cook_name }} जी, मैं रसोई सहायक बोल रही हूँ। क्या आप एक मिनट बात कर सकती हैं?",
+  "endMessage": "धन्यवाद {{ cook_name }} जी, आपका दिन शुभ हो।",
+  "llm": "TODO: from GET config/llm_models",
+  "transcriber": "TODO: from GET config/transcriber_config (must support hi-IN)",
+  "tts": "TODO: from GET config/tts_config (must support hi-IN)",
+  "postCallExtraction": {
+    "acknowledged": "boolean: she heard and acknowledged the menu",
+    "reports": "list of {type: used_up|remaining|spoiled|low, item: one of the canonical item names, quantity: number or null, unit: g|ml|pcs or null, confirmed: boolean (true ONLY if she said yes to the read-back)}",
+    "problem": "{type: stove|cooker|time|ingredient|none, item: canonical name or null, confirmed: boolean}",
+    "leave_tomorrow": "boolean",
+    "safety_issue": "boolean: gas smell, fire, or someone unwell",
+    "notes": "short free text"
+  },
+  "dispositions": ["BRIEFED", "PROBLEM_REPORTED", "ON_LEAVE", "RECONCILED", "RNR", "DND", "WRNG"]
+}
