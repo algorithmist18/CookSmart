@@ -143,6 +143,7 @@ MIGRATIONS = [
     ("plans", "excluded", "TEXT NOT NULL DEFAULT '[]'"),
     ("plans", "flags", "TEXT NOT NULL DEFAULT '{}'"),
     ("plans", "served", "TEXT NOT NULL DEFAULT '[]'"),
+    ("plans", "meals", "TEXT NOT NULL DEFAULT '{}'"),
 ]
 
 

@@ -22,7 +22,7 @@ from .channels import MockChannel
 from .config import Settings, get_settings
 from .db import DB
 from .nlu import NLU, ClaudeNLU
-from .planner import ClaudePlanner, Planner
+from .planner import ClaudePlanner, Planner, menu_name
 from .recipes import ITEMS
 from .providers.controls import MockControls
 from .providers.dispatch import MockDispatchProvider
@@ -220,8 +220,9 @@ def create_app(settings: Settings | None = None, db: DB | None = None, platform:
         extra = [{"name": n, "qty": 0, "shown": 0, "unit": ITEMS[n]["unit"], "incoming": q, "days_left": None,
                   "doubtful": False, "spoiled": False, **daystory.view(n)} for n, q in incoming.items() if n in ITEMS]
         story = repo.list_story(db, hid, plan["id"]) if plan else []
-        return {"fridge": items + extra, "story": story, "meals": daystory.split(plan["chosen"]) if plan else {},
-                "served": plan["served"] if plan else [], "household": h, "inventory": items, "plan": plan, "orders": repo.list_orders(db, hid),
+        return {"fridge": items + extra, "story": story, "meals": daystory.meals_of(plan) if plan else {},
+                "served": plan["served"] if plan else [],
+                "meal_names": {m: menu_name(v) for m, v in daystory.meals_of(plan).items() if v} if plan else {}, "household": h, "inventory": items, "plan": plan, "orders": repo.list_orders(db, hid),
                 "audit": repo.list_audit(db, hid), "memory": repo.list_memory(db, hid),
                 "controls": controls.as_dict(), "nlu_source": agent.nlu.last_source,
                 "planner": agent.planner.last_source if agent.planner.claude else "heuristic",

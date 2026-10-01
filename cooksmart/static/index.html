@@ -70,7 +70,7 @@
   .fdoor { border-radius:14px; background:var(--inside); border:1px solid var(--line); height:min(720px,calc(100vh - 110px)); min-height:560px; display:flex; flex-direction:column; overflow:hidden; position:relative; }
   .fdoor.screen { background:var(--screen); border-color:#000; --chat:#0d1519; --in:#1d2a31; --out:#005c4b; --inkb:#e9edef; --mut:#8696a0; --line:#2b3a43; --dot:#ffffff0a; }
   .zone { padding:8px 10px 6px; border-bottom:6px solid var(--shelf); flex:1; min-height:100px; }
-  .zone:last-child { border-bottom:0; } .zone h4 { margin:0 0 4px; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--mut); }
+  .zone.empty { flex:0 0 auto; min-height:0; } .zone:last-child { border-bottom:0; } .zone h4 { margin:0 0 4px; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--mut); }
   .zone.drawer { background:#00a88410; border-radius:0 0 10px 10px; }
   .shelf { display:flex; flex-wrap:wrap; gap:8px 10px; align-items:flex-end; }
   .it { position:relative; width:64px; text-align:center; font-size:11px; line-height:1.2; }
@@ -99,7 +99,7 @@
   .stage.done::before { background:var(--accent); border-color:var(--accent); } .stage.done { border-left-color:var(--accent); }
   .stage.now::before { border-color:var(--accent); box-shadow:0 0 0 4px var(--accent-soft); } .stage.skip { opacity:.45; }
   .stage .when { font-size:11.5px; color:var(--mut); } .stage .ttl { font-weight:600; font-size:14px; } .stage.later .ttl { color:var(--mut); font-weight:500; }
-  .stage .sum { font-size:13px; color:var(--ink); } .dch { display:inline-block; margin:3px 4px 0 0; padding:0 7px; border-radius:999px; font-size:11.5px; font-weight:600; background:#d9302520; color:var(--warn); }
+  .stage .sum { font-size:13px; color:var(--ink); white-space:pre-line; } .stage.later .sum { color:var(--mut); } .dch { display:inline-block; margin:3px 4px 0 0; padding:0 7px; border-radius:999px; font-size:11.5px; font-weight:600; background:#d9302520; color:var(--warn); }
   .dch.up { background:var(--accent-soft); color:var(--accent); }
   #nextBtn { margin-top:6px; } #nextHint { margin-top:8px; color:var(--mut); font-size:13px; }
   .link { color:var(--link); cursor:pointer; background:none; border:0; padding:0; font-size:14px; }
@@ -192,7 +192,7 @@
   .log { font:12px/1.5 var(--mono); max-height:340px; overflow:auto; color:var(--mut); }
   .sw { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; }
 
-  @media (max-width: 1180px) { #view-sim { grid-template-columns:minmax(0,1fr); } .pantry { flex-direction:row; flex-wrap:wrap; } .jar { flex:1 1 120px; } .fridge { grid-template-columns:minmax(0,1fr); } .fdoor { height:auto; min-height:560px; } .fdoor.screen { height:640px; } .studio-grid, .kb-layout, .kgrid, .twocol, .grid2 { grid-template-columns:minmax(0,1fr); } }
+  @media (max-width: 1180px) { #view-sim { grid-template-columns:minmax(0,1fr); } .pantry { flex-direction:row; flex-wrap:wrap; } .jar { flex:1 1 120px; } .fridge { grid-template-columns:minmax(0,1fr); } .fdoor { height:auto; min-height:560px; } .fdoor.screen { height:640px; order:-1; } .studio-grid, .kb-layout, .kgrid, .twocol, .grid2 { grid-template-columns:minmax(0,1fr); } }
   @media (max-width: 640px) { .top { padding:0 10px; gap:8px; } .brand span { display:none; } main { padding:12px; } }
 </style>
 </head>
@@ -367,7 +367,7 @@
 
   <!-- ======================= KITCHEN & LOGS ======================= -->
   <section id="view-kitchen" hidden>
-    <h2>Kitchen &amp; logs</h2>
+    <h2>Stock &amp; logs</h2>
     <p class="mut">What the agent can see, what it did, and ways to make things go wrong on purpose.</p>
     <div class="kgrid">
       <div class="card"><h3>Kitchen stock</h3><div id="inv"></div></div>
@@ -794,7 +794,7 @@ function renderFridge(s) {
   s.fridge.forEach(i => { if (i.shown <= 0 && !i.incoming) return; (i.zone === 'pantry' ? jars : shelves[i.zone] || shelves.veg).push(i); });
   const dl = n => prevShown && prevShown[n] !== undefined ? now[n] - prevShown[n] : (prevShown && now[n] > 0 ? now[n] : 0);
   $$('#fridgeIn .zone').forEach(z => { const items = shelves[z.dataset.zone] || [], box = $('.shelf', z); box.innerHTML = '';
-    items.forEach(i => box.appendChild(itemEl(i, dl(i.name)))); if (!items.length) box.innerHTML = '<span class="emptyfr">empty</span>'; });
+    items.forEach(i => box.appendChild(itemEl(i, dl(i.name)))); if (!items.length) box.innerHTML = '<span class="emptyfr">empty</span>'; z.classList.toggle('empty', !items.length); });
   $('#pantry').innerHTML = jars.map(i => `<div class="jar"><div class="lvl" style="height:${Math.round(Math.min(1, i.shown / ((i.full || 1) * 2)) * 100)}%"></div><b>${i.emoji} ${esc(i.name)}</b><small>${i.shown > 0 ? qtyTxt(i.shown, i.unit) : 'out'}${i.incoming ? ' · +' + qtyTxt(i.incoming, i.unit) + ' coming' : ''}</small></div>`).join('') || '<span class="emptyfr">empty</span>';
   prevShown = now;
 }
@@ -807,7 +807,7 @@ function renderDay(s) {
     const e = by[k]; let cls;
     if (e) cls = 'done'; else if (i < last) cls = 'skip'; else if (now) { cls = 'now'; now = false; } else cls = 'later';
     const ch = e ? e.deltas.map(d => `<span class="dch ${d.qty > 0 ? 'up' : ''}">${d.qty > 0 ? '+' : '−'}${qtyTxt(Math.abs(d.qty), d.unit)} ${esc(d.item)}</span>`).join('') : '';
-    const sum = e ? esc(e.text) : (cls === 'skip' ? 'not needed today' : '');
+    const planned = (s.meal_names || {})[k], sum = e ? esc(e.text) : (cls === 'skip' ? 'not needed today' : planned ? esc(planned) : (['breakfast', 'lunch', 'dinner'].includes(k) && s.plan && s.plan.chosen.length ? 'light, nothing to cook' : ''));
     return `<div class="stage ${cls}"><div class="when">${t}</div><div class="ttl">${name}</div>${sum ? `<div class="sum">${sum}</div>` : ''}${ch}</div>`;
   }).join('');
 }

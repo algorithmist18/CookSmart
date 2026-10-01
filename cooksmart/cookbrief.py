@@ -13,6 +13,7 @@ import datetime as dt
 import re
 from dataclasses import dataclass, field
 
+from . import cookmsgs, daystory
 from . import inventory as inv
 from . import knowledge as kn
 from . import profile as prof
@@ -72,6 +73,11 @@ def cautions_for(prefs: dict, cook_day: str) -> list[str]:
     return out + _customs_today(prefs, cook_day)
 
 
+def _dishes(plan: dict, chosen: list[str]) -> list[str]:
+    labelled = cookmsgs.dish_names_by_meal(daystory.meals_of(plan)) if set(plan.get('chosen') or []) == set(chosen) else None
+    return [labelled] if labelled else [RECIPES[r]['hi'] for r in chosen]
+
+
 def build(db, hid: str, h: dict, plan: dict, *, call_type: str = "brief", start=None, wait=None,
           order_coming: bool = False, owner_note: str = "") -> CookBriefData:
     prefs = h["preferences"]
@@ -106,7 +112,7 @@ def build(db, hid: str, h: dict, plan: dict, *, call_type: str = "brief", start=
     return CookBriefData(
         call_type=call_type, cook_name=prefs.get("cook_name", "दीदी"),
         people=int(h["family_size"] + plan["flags"].get("guests", 0)),
-        dishes=[RECIPES[r]["hi"] for r in chosen],
+        dishes=_dishes(plan, chosen),
         start_dishes=[RECIPES[r]["hi"] for r in (start if start is not None else chosen)],
         wait_dishes=[RECIPES[r]["hi"] for r in (wait or [])],
         ingredients=ingredients, use_first=use_first,

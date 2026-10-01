@@ -6,7 +6,7 @@ import json
 
 from .db import DB
 
-PLAN_JSON = ("proposals", "chosen", "feedback", "gaps", "offer", "brief", "pending", "report", "notes", "excluded", "flags", "served")
+PLAN_JSON = ("proposals", "chosen", "feedback", "gaps", "offer", "brief", "pending", "report", "notes", "excluded", "flags", "served", "meals")
 
 
 def now_iso() -> str:
@@ -62,6 +62,7 @@ def _decode_plan(row: dict | None) -> dict | None:
         row[f] = row[f] or []
     row["report"] = row["report"] or {}
     row["flags"] = row["flags"] or {}
+    row["meals"] = row["meals"] or {}
     row["reviewed"] = bool(row["reviewed"])
     return row
 

@@ -38,6 +38,15 @@ def dish_names(recipe_ids: list[str]) -> str:
     return " और ".join(RECIPES[r]["hi"] for r in recipe_ids)
 
 
+MEAL_HI = {"breakfast": "ब्रेकफास्ट", "lunch": "लंच", "dinner": "डिनर"}
+
+
+def dish_names_by_meal(meals: dict) -> str | None:
+    """'ब्रेकफास्ट में पोहा, लंच में … , डिनर में …' when more than one meal is planned, else None."""
+    parts = [f"{MEAL_HI[m]} में {dish_names(meals[m])}" for m in ("breakfast", "lunch", "dinner") if meals.get(m)]
+    return ", ".join(parts) if len(parts) > 1 else None
+
+
 def render(key: str, lang: str = "hi-IN", **kw) -> CookMessage:
     return CookMessage(T[key].format(**kw), lang, QUICK.get(key, ()))
 

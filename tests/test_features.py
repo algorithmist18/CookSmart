@@ -354,3 +354,65 @@ def test_day_story_fridge_decreases_through_meals_and_grows_on_delivery():
     c.post("/api/h/trigger/end_of_day")
     c.post("/api/h/trigger/close_day")
     assert st()["story"][-1]["stage"] == "wrapup"
+
+
+# ------------------------------------------------------------------ breakfast, lunch and dinner planned separately
+def _day_env():
+    c = TestClient(create_app(Settings(":memory:", "", "m", "", "t"), DB(":memory:")))
+    c.post("/api/households", json={"id": "h"})
+    c.post("/api/h/scenario/classic")
+    return c
+
+
+def test_each_option_plans_three_separate_meals_from_stock():
+    from cooksmart.recipes import RECIPES
+    c = _day_env()
+    c.post("/api/h/trigger/nightly_review")
+    props = c.get("/api/h/owner/state").json()["plan"]["proposals"]
+    assert props and all(p["meals"]["lunch"] for p in props)
+    full = [p for p in props if p["meals"]["breakfast"] and p["meals"]["dinner"]]
+    assert full, "at least one option should have all three meals"
+    for p in full:
+        m = p["meals"]
+        assert all(RECIPES[r]["course"] == "breakfast" for r in m["breakfast"])
+        assert not (set(m["lunch"]) & set(m["dinner"])) and not (set(m["lunch"]) & set(m["breakfast"]))
+        assert p["recipe_ids"][0] == m["lunch"][0]
+        assert p["recipe_ids"] == list(dict.fromkeys(m["lunch"] + m["dinner"] + m["breakfast"]))
+    msgs = " ".join(m["text"] for m in c.get("/api/h/owner/messages").json())
+    assert "(lunch)" in msgs and "🌅" in msgs and "🌙" in msgs
+
+
+def test_extra_meals_never_add_shortages_or_allergens():
+    from cooksmart.planner import PlanContext, plan_day
+    from cooksmart.recipes import RECIPES
+    stock = {"poha": {"qty": 500, "unit": "g", "days_left": None}, "onion": {"qty": 6, "unit": "pcs", "days_left": None},
+             "peanuts": {"qty": 100, "unit": "g", "days_left": None}, "paneer": {"qty": 400, "unit": "g", "days_left": 2},
+             "atta": {"qty": 1000, "unit": "g", "days_left": None}, "tomato": {"qty": 4, "unit": "pcs", "days_left": 2}}
+    ctx = PlanContext("2030-01-02", stock, preferences={"diet": "vegetarian", "members": [{"name": "A", "allergies": ["peanut"]}]})
+    m = plan_day(["paneer_bhurji", "roti"], ctx)
+    assert m["breakfast"] != ["poha"]                         # poha needs peanuts: never, with a peanut allergy
+    assert all("peanuts" not in RECIPES[r]["needs"] for v in m.values() for r in v)
+
+
+def test_claude_suggested_breakfast_and_dinner_are_validated():
+    from cooksmart.planner import PlanContext, plan_day
+    stock = {"poha": {"qty": 500, "unit": "g", "days_left": None}, "onion": {"qty": 6, "unit": "pcs", "days_left": None},
+             "peanuts": {"qty": 100, "unit": "g", "days_left": None}, "atta": {"qty": 1000, "unit": "g", "days_left": None},
+             "paneer": {"qty": 400, "unit": "g", "days_left": 2}, "tomato": {"qty": 4, "unit": "pcs", "days_left": 2}}
+    ctx = PlanContext("2030-01-02", stock, preferences={"diet": "vegetarian"})
+    m = plan_day(["paneer_bhurji", "roti"], ctx, breakfast=["poha"], dinner=["chicken_curry"])
+    assert m["breakfast"] == ["poha"]                         # makeable from stock: kept
+    assert "chicken_curry" not in m["dinner"]                 # not allowed (vegetarian): replaced by code
+
+
+def test_cook_is_told_which_dish_is_for_which_meal():
+    c = _day_env()
+    c.post("/api/h/trigger/nightly_review")
+    c.post("/api/h/owner/message", json={"text": "1"})
+    c.post("/api/h/owner/message", json={"text": "approve"})
+    c.post("/api/h/trigger/morning")
+    plan = c.get("/api/h/owner/state").json()["plan"]
+    cook = " ".join(m["text"] for m in c.get("/api/h/cook/messages").json())
+    if plan["meals"]["breakfast"] or plan["meals"]["dinner"]:
+        assert "लंच में" in cook
+    assert "₹" not in cook

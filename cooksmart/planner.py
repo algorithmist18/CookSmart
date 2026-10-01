@@ -7,6 +7,7 @@ hallucinated. A heuristic planner is the fallback and the offline mode.
 from __future__ import annotations
 
 import datetime as dt
+import dataclasses
 from dataclasses import dataclass, field
 
 from . import inventory as inv
@@ -46,6 +47,7 @@ class Proposal:
     feasible: bool
     gaps: list[dict]
     repeat_days_ago: int | None = None
+    meals: dict = field(default_factory=dict)    # {"breakfast": [...], "lunch": [...], "dinner": [...]}; recipe_ids is their union
 
     def as_dict(self) -> dict:
         return self.__dict__.copy()
@@ -145,6 +147,79 @@ def enrich(ids: list[str], ctx: PlanContext, reason: str | None = None) -> Propo
         if ctx.scale != 1.0:
             reason += f" Scaled for {ctx.scale * 4:g} people."
     return Proposal(list(ids), menu_name(ids), reason, not gaps, gaps, _repeat_days(ids[0], ctx))
+
+
+# ---------------------------------------------------------------- the day: breakfast, lunch, dinner
+MEAL_ORDER = ("lunch", "dinner", "breakfast")      # recipe_ids is the union in this order, so recipe_ids[0] is lunch's main
+
+
+def _take(left: dict, ids: list[str], ctx: PlanContext) -> None:
+    for item, n in _needs(ids, ctx).items():
+        if item in left:
+            left[item]["qty"] = max(0.0, left[item]["qty"] - n["qty"])
+
+
+def _fits(ids: list[str], ctx: PlanContext, left: dict) -> bool:
+    return bool(ids) and not inv.gaps(_needs(ids, ctx), left) and all(allowed(i, ctx) for i in ids)
+
+
+def _pick_breakfast(ctx: PlanContext, used: set[str], left: dict) -> list[str]:
+    best = None
+    for rid, r in RECIPES.items():
+        if r["course"] != "breakfast" or rid in used or rid in ctx.exclude_ids or not _fits([rid], ctx, left):
+            continue
+        rep = _repeat_days(rid, ctx)
+        key = (-_urgency_of([rid], ctx), 1 if rep is not None and rep <= 3 else 0, r["prep"], rid)
+        if best is None or key < best[0]:
+            best = (key, rid)
+    return [best[1]] if best else []
+
+
+def _pick_dinner(ctx: PlanContext, used: set[str], left: dict, lunch_main: str) -> list[str]:
+    ctx2 = dataclasses.replace(ctx, stock=left, exclude_ids=set(ctx.exclude_ids) | used)
+    best = None
+    for rid, r in RECIPES.items():
+        if r["course"] not in _mainable(ctx) - {"breakfast"} or rid in used or rid == lunch_main or not allowed(rid, ctx2):
+            continue
+        ids = _build_menu(rid, ctx2)
+        if not ids or any(i in used for i in ids) or not _fits(ids, ctx2, left):
+            continue
+        rep = _repeat_days(rid, ctx)
+        key = (-_urgency_of(ids, ctx2), 1 if rep is not None and rep <= 3 else 0,
+               0 if "light" in r["tags"] else 1, -len(ids), rid)
+        if best is None or key < best[0]:
+            best = (key, ids)
+    return best[1] if best else []
+
+
+def plan_day(lunch: list[str], ctx: PlanContext, breakfast: list[str] | None = None, dinner: list[str] | None = None) -> dict:
+    """Breakfast, lunch and dinner planned separately, each from what is left after the meals before it.
+    A suggestion (e.g. from Claude) is used only if it is allowed and makeable from the remaining stock;
+    otherwise the heuristic picks. A meal with nothing suitable stays empty rather than forcing a shortage."""
+    left = {k: dict(v) for k, v in ctx.stock.items()}
+    _take(left, lunch, ctx)
+    used = set(lunch)
+    bf = [i for i in dict.fromkeys(breakfast or []) if i in RECIPES and i not in used]
+    if not _fits(bf, ctx, left):
+        bf = _pick_breakfast(ctx, used, left)
+    _take(left, bf, ctx)
+    used |= set(bf)
+    dn = [i for i in dict.fromkeys(dinner or []) if i in RECIPES and i not in used][:3]
+    if not _fits(dn, ctx, left):
+        dn = _pick_dinner(ctx, used, left, lunch[0])
+    return {"breakfast": bf, "lunch": list(lunch), "dinner": dn}
+
+
+def with_day(p: Proposal, ctx: PlanContext, breakfast=None, dinner=None) -> Proposal:
+    """Turn a lunch proposal into a whole-day one. Gaps and feasibility stay those of lunch: the other meals only
+    ever use stock that is already there."""
+    meals = plan_day(p.recipe_ids, ctx, breakfast, dinner)
+    union = [i for m in MEAL_ORDER for i in meals[m] if i]
+    return dataclasses.replace(p, recipe_ids=list(dict.fromkeys(union)), meals=meals)
+
+
+def day_name(meals: dict) -> str:
+    return " · ".join(f"{m.title()}: {menu_name(meals[m])}" for m in ("breakfast", "lunch", "dinner") if meals.get(m))
 
 
 # ---------------------------------------------------------------- heuristic
@@ -248,7 +323,7 @@ def heuristic_propose(ctx: PlanContext, n: int = 3) -> Proposals:
         cands.remove(best)
         picked.append(best[0])
         covered |= {i for i, w in best[2].items() if w > 0}
-    picks = [enrich(ids, ctx) for ids in picked]
+    picks = [with_day(enrich(ids, ctx), ctx) for ids in picked]
     return Proposals(picks, tradeoffs(picks, ctx), "heuristic")
 
 
@@ -271,7 +346,7 @@ def tradeoffs(picks: list[Proposal], ctx: PlanContext) -> list[str]:
 # ---------------------------------------------------------------- Claude
 PROPOSE_TOOL = {
     "name": "propose_menu",
-    "description": "Propose 2-3 alternative meals for tomorrow. Each meal is 1-3 dishes from the recipe book.",
+    "description": "Propose 2-3 alternative plans for tomorrow. Each plan has lunch (1-3 dishes), optionally breakfast and dinner.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -280,7 +355,11 @@ PROPOSE_TOOL = {
                 "properties": {
                     "dish_ids": {"type": "array", "minItems": 1, "maxItems": 3,
                                  "items": {"type": "string", "enum": sorted(RECIPES)},
-                                 "description": "Main dish first, then companions (e.g. roti, dal)."},
+                                 "description": "LUNCH: main dish first, then companions (e.g. roti, dal)."},
+                    "breakfast_ids": {"type": "array", "maxItems": 1, "items": {"type": "string", "enum": sorted(RECIPES)},
+                                      "description": "Optional breakfast dish, made from stock left after lunch."},
+                    "dinner_ids": {"type": "array", "maxItems": 3, "items": {"type": "string", "enum": sorted(RECIPES)},
+                                   "description": "Optional lighter dinner, made from stock left after lunch and breakfast."},
                     "reason": {"type": "string", "description": "One friendly sentence."}},
                 "required": ["dish_ids", "reason"]}},
         },
@@ -292,7 +371,9 @@ SYSTEM = """You plan tomorrow's home-cooked meal for an Indian household.
 Priorities, in order: (1) use ingredients closest to spoiling, (2) do not repeat a recent dish unless it is needed to
 avoid waste, (3) honour diet, fasting, guests, dislikes and the owner's feedback, (4) tasty, balanced and healthy
 (e.g. a sabzi or dal with roti or rice). Offer 2-3 meals that differ from each other. Only choose dishes from the
-recipe book. Prefer meals fully makeable from the stock. Respect every constraint (broken stove => no stove dishes;
+recipe book. Plan breakfast, lunch and dinner separately: lunch is the main meal (dish_ids); breakfast_ids and
+dinner_ids are optional and must be makeable from what is left after the earlier meals; dinner should be lighter and
+differ from lunch. Prefer meals fully makeable from the stock. Respect every constraint (broken stove => no stove dishes;
 fasting => vrat dishes only; cook off => no-cook dishes). Never invent ingredients."""
 
 
@@ -328,7 +409,7 @@ class ClaudePlanner:
             for m in block.input.get("menus", []):
                 ids = [i for i in dict.fromkeys(m.get("dish_ids", [])) if i in RECIPES and allowed(i, ctx)]
                 if ids and ids[0] not in ctx.exclude_ids and all(p.recipe_ids[0] != ids[0] for p in picks):
-                    picks.append(enrich(ids[:3], ctx, m.get("reason")))
+                    picks.append(with_day(enrich(ids[:3], ctx, m.get("reason")), ctx, m.get("breakfast_ids"), m.get("dinner_ids")))
         if not picks:
             raise ValueError("Claude returned no valid menus")
         picks = picks[:n]

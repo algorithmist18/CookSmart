@@ -11,6 +11,8 @@ from .recipes import ITEMS, RECIPES
 MEALS = ("breakfast", "lunch", "dinner")
 SHARE = {"lunch": 0.6, "dinner": 0.4}          # the non-breakfast menu is cooked for lunch, then again for dinner
 
+ICON = {"breakfast": "🌅", "lunch": "☀️", "dinner": "🌙"}
+
 STAGES = [  # key, clock, title
     ("review", "9:00 PM", "Night check"), ("plan", "9:10 PM", "Menu picked"), ("shop", "9:30 PM", "Groceries ordered"),
     ("brief", "6:30 AM", "Cook briefed"), ("delivery", "7:30 AM", "Groceries arrive"),
@@ -37,15 +39,25 @@ def view(item: str) -> dict:
     return {"emoji": emo, "zone": zone, "full": ITEMS.get(item, {}).get("pack", 1)}
 
 
+def meals_of(plan: dict) -> dict[str, list[str]]:
+    """The plan's own breakfast/lunch/dinner. Dishes it doesn't place go to lunch; old plans fall back to a guess."""
+    m = plan.get("meals") or {}
+    if not m:
+        return split(plan["chosen"])
+    out = {k: [r for r in m.get(k, []) if r in plan["chosen"]] for k in MEALS}
+    out["lunch"] += [r for r in plan["chosen"] if not any(r in v for v in out.values())]
+    return out
+
+
 def split(chosen: list[str]) -> dict[str, list[str]]:
     bf = [r for r in chosen if RECIPES[r]["course"] == "breakfast"]
     rest = [r for r in chosen if r not in bf]
     return {"breakfast": bf, "lunch": rest, "dinner": list(rest)}
 
 
-def meal_needs(chosen: list[str], scale: float, meal: str) -> dict[str, dict]:
-    ids = split(chosen)[meal]
-    share = 1.0 if meal == "breakfast" else SHARE[meal]
+def meal_needs(plan: dict, scale: float, meal: str) -> dict[str, dict]:
+    ids = meals_of(plan)[meal]
+    share = 1.0 if (meal == "breakfast" or plan.get("meals")) else SHARE[meal]
     return {k: {"qty": round(v["qty"] * share, 1), "unit": v["unit"]} for k, v in inv.needs_for(ids, scale).items()}
 
 
@@ -59,6 +71,6 @@ def consumed_so_far(plan: dict | None, scale: float) -> dict[str, float]:
         return {}
     out: dict[str, float] = {}
     for meal in plan.get("served", []):
-        for k, v in meal_needs(plan["chosen"], scale, meal).items():
+        for k, v in meal_needs(plan, scale, meal).items():
             out[k] = out.get(k, 0.0) + v["qty"]
     return out

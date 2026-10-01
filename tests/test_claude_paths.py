@@ -43,7 +43,7 @@ def test_claude_menus_are_validated_and_gaps_computed_by_code():
         {"dish_ids": ["palak_paneer"], "reason": "Duplicate main is dropped."},
     ]})
     out = claude_planner(client).propose(ctx())
-    assert [p.recipe_ids for p in out.items] == [["palak_paneer", "roti"], ["dal_tadka"]]
+    assert [p.meals["lunch"] for p in out.items] == [["palak_paneer", "roti"], ["dal_tadka"]]      # lunch is what Claude chose
     assert out.items[0].reason == "Uses the spinach that expires tomorrow."
     assert out.items[0].feasible and out.source == "claude"
     # the prompt only offers recipes the household may eat
