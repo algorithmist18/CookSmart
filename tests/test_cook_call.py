@@ -87,7 +87,7 @@ def test_brief_contains_inventory_expiry_taste_health_and_cautions(env):
     env.agent.nightly_review(env.hid)
     env.agent.handle_owner(env.hid, "palak dal and roti")
     v = cookbrief.to_variables(brief_for(env))
-    assert "पालक" in v["use_first_hi"] and "इस्तेमाल" in v["use_first_hi"]          # ageing item, with the reason
+    assert "पालक" in v["use_first_hi"] and "यूज़" in v["use_first_hi"]          # ageing item, with the reason
     assert "ग्राम" in v["ingredients_hi"] and v["people"] == "4"
     assert "मूंगफली" in v["cautions_hi"] and "आरव" in v["cautions_hi"]               # allergy said even though no peanut in the menu
     assert v["taste_tips_hi"] and v["health_note_hi"]
@@ -141,7 +141,7 @@ def test_knowledge_base_is_per_household_and_never_leaks_across():
     a = gnani_kb.build_docs(DEMO, 4)["02_allergy_aur_suraksha.md"]
     b = gnani_kb.build_docs({"members": [{"name": "मीरा", "allergies": ["egg"]}]}, 3)["02_allergy_aur_suraksha.md"]
     assert "आरव" not in b and "मीरा" in b and "मीरा" not in a
-    assert "अभी किसी को एलर्जी दर्ज नहीं" in gnani_kb.build_docs({}, 2)["02_allergy_aur_suraksha.md"]
+    assert "अभी किसी की एलर्जी रजिस्टर्ड नहीं" in gnani_kb.build_docs({}, 2)["02_allergy_aur_suraksha.md"]
 
 
 def test_faqs_respect_gnani_limits_and_put_safety_first():

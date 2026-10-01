@@ -95,8 +95,8 @@ DAIRY = {"milk", "curd", "paneer", "cream"}
 
 # Allergen groups over the ingredients CookSmart tracks. Hidden sources matter: besan IS chickpea, bread IS wheat.
 ALLERGENS: dict[str, dict] = {
-    "peanut": dict(items={"peanuts"}, hi="मूंगफली", aliases=["peanut", "peanuts", "moongfali", "मूंगफली"]),
-    "dairy": dict(items=set(DAIRY), hi="दूध और दूध से बनी चीज़ें (दही, पनीर, क्रीम)",
+    "peanut": dict(items={"peanuts"}, hi="मूंगफली (पीनट)", aliases=["peanut", "peanuts", "moongfali", "मूंगफली"]),
+    "dairy": dict(items=set(DAIRY), hi="मिल्क और मिल्क प्रोडक्ट्स (दही, पनीर, क्रीम)",
                   aliases=["dairy", "milk", "doodh", "lactose", "दूध"]),
     "egg": dict(items={"egg"}, hi="अंडा", aliases=["egg", "eggs", "anda", "अंडा"]),
     "gluten": dict(items={"atta", "suji", "bread"}, hi="गेहूं (आटा, सूजी, ब्रेड)",

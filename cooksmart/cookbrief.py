@@ -67,7 +67,7 @@ def cautions_for(prefs: dict, cook_day: str) -> list[str]:
     out = []
     for g in sorted(prof.allergy_groups(prefs)):
         who = ", ".join(prof.who_is_allergic(prefs, g))
-        out.append(f"{ALLERGENS[g]['hi']} बिलकुल नहीं डालनी ({who} को एलर्जी). उसी चम्मच/कड़छी का इस्तेमाल भी न करें, "
+        out.append(f"{ALLERGENS[g]['hi']} बिलकुल नहीं डालनी ({who} को एलर्जी). उसी स्पून/कड़छी को यूज़ भी न करें, "
                    "तड़के, चटनी या सजावट में भी नहीं")
     return out + _customs_today(prefs, cook_day)
 
@@ -138,7 +138,7 @@ def spoken_summary(b: CookBriefData) -> str:
     if b.wait_dishes and b.start_dishes:
         t += f" {' और '.join(b.wait_dishes)} का सामान अभी नहीं पहुँचा है, पहले {' और '.join(b.start_dishes)} शुरू करें।"
     if b.use_first:
-        t += " पहले इस्तेमाल करें: " + b.use_first[0].split(".")[0] + "।"
+        t += " पहले यूज़ करें: " + b.use_first[0].split(".")[0] + "।"
     if b.cautions:
-        t += " ध्यान रहे: " + b.cautions[0].split("(")[0].strip() + "।"
+        t += " कॉशन: " + b.cautions[0].split("(")[0].strip() + "।"
     return t

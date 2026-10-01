@@ -11,18 +11,18 @@ from __future__ import annotations
 
 from .recipes import ALLERGENS, ITEMS, RECIPES
 
-AGE_GROUPS = {"child": "बच्चा", "adult": "बड़े", "elder": "बुज़ुर्ग"}
-SPICE_HI = {"mild": "हल्का", "medium": "मध्यम", "hot": "तीखा"}
+AGE_GROUPS = {"child": "किड", "adult": "एडल्ट", "elder": "एल्डर"}
+SPICE_HI = {"mild": "माइल्ड", "medium": "मीडियम", "hot": "स्पाइसी"}
 LEVEL_HI = {"low": "कम", "normal": "सामान्य", "high": "ज़्यादा"}
 
 # Owner-stated health needs -> plain cooking instructions. This is household preference, not medical advice.
 HEALTH_TO_INSTRUCTION = {
-    "diabetes": "चीनी और मीठा बिलकुल कम; चावल, आलू और मैदा कम; दाल-सब्ज़ी ज़्यादा",
-    "high_bp": "नमक कम; अचार, पापड़ और ऊपर से नमक नहीं",
-    "cholesterol": "घी-तेल कम; तला हुआ नहीं; क्रीम नहीं",
-    "weight_loss": "तेल कम; तला हुआ नहीं; सब्ज़ी और दाल ज़्यादा",
-    "soft_food": "नरम, अच्छी तरह गला हुआ खाना; कम मसाला",
-    "gas_acidity": "कम मसाला; ज़्यादा तला या भारी नहीं",
+    "diabetes": "चीनी और स्वीट्स बिलकुल कम; राइस, आलू और मैदा कम; दाल-सब्ज़ी ज़्यादा",
+    "high_bp": "नमक कम; अचार, पापड़ और ऊपर से सॉल्ट नहीं",
+    "cholesterol": "घी-ऑयल कम; फ़्राइड नहीं; क्रीम नहीं",
+    "weight_loss": "ऑयल कम; फ़्राइड नहीं; सब्ज़ी और दाल ज़्यादा",
+    "soft_food": "सॉफ़्ट, अच्छी तरह गला हुआ खाना; कम मसाला",
+    "gas_acidity": "कम मसाला; ज़्यादा फ़्राइड या हैवी नहीं",
 }
 
 
@@ -81,7 +81,7 @@ def style_instructions(prefs: dict) -> list[str]:
     out = []
     if st.get("spice") in SPICE_HI:
         out.append(f"मसाला: {SPICE_HI[st['spice']]}")
-    for key, label in (("oil", "तेल"), ("salt", "नमक"), ("sugar", "चीनी")):
+    for key, label in (("oil", "ऑयल"), ("salt", "सॉल्ट"), ("sugar", "शुगर")):
         if st.get(key) in LEVEL_HI and st[key] != "normal":
             out.append(f"{label}: {LEVEL_HI[st[key]]}")
     return out
@@ -110,7 +110,7 @@ def cook_safe_summary(prefs: dict) -> str:
     for m in members(prefs):
         ins = member_instructions(m)
         if ins:
-            lines.append(f"{m['name']} ({AGE_GROUPS.get(m.get('age_group', 'adult'), 'बड़े')}): " + "; ".join(ins))
+            lines.append(f"{m['name']} ({AGE_GROUPS.get(m.get('age_group', 'adult'), 'एडल्ट')}): " + "; ".join(ins))
     return "\n".join(lines)
 
 
