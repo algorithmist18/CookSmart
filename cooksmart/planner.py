@@ -143,9 +143,9 @@ def enrich(ids: list[str], ctx: PlanContext, reason: str | None = None) -> Propo
         if urgent:
             reason = "Uses up " + ", ".join(f"{i} (use by {_use_by(ctx, i)})" for i in urgent) + "."
         else:
-            reason = "Uses what you already have."
+            reason = "Uses stock on hand."
         if ctx.scale != 1.0:
-            reason += f" Scaled for {ctx.scale * 4:g} people."
+            reason += f" For {ctx.scale * 4:g} people."
     return Proposal(list(ids), menu_name(ids), reason, not gaps, gaps, _repeat_days(ids[0], ctx))
 
 

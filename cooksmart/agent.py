@@ -155,13 +155,12 @@ class Agent:
         props = plan["proposals"]
         head = (preface + "\n\n") if preface else ""
         if not props:
-            self._say(hid, head + "🤷 I can't build a menu from stock I've confirmed. Please update the kitchen "
-                                  "(e.g. *tomato 4*, *paneer 200 g*) or say *all good* if it's all still there.")
+            self._say(hid, head + "🤷 No menu: nothing confirmed in stock. Update it (*tomato 4*) or say *all good*.")
             return
-        text = head + "🍽️ *Tomorrow's options*\n" + self._fmt_props(props)
+        text = head + "🍽️ *Tomorrow*\n" + self._fmt_props(props)
         if plan["notes"]:
             text += "\n\n📝 " + " ".join(plan["notes"])
-        text += "\n\nReply with a number (or *1 and 2*), or tell me what you'd like instead."
+        text += "\n\nReply *1*, *2* or *1 and 2*, or name a dish."
         buttons = [f"Accept {n}" for n in range(1, len(props) + 1)] + ["Something else"]
         self._say(hid, text, buttons)
 
@@ -184,6 +183,10 @@ class Agent:
             o = previous["offer"]
             preface.append(f"🔔 *Reminder:* the grocery order for {_names(previous['chosen'])} "
                            f"(₹{o['total']:.0f}) was never approved. Nothing was bought.")
+        soon = sorted((i for i in inv.list_items(self.db, hid) if inv.days_left(i, day) is not None and inv.days_left(i, day) <= 2
+                       and not inv.is_spoiled(i, day)), key=lambda i: inv.days_left(i, day))
+        if soon:
+            preface.append("🧊 Use soon: " + ", ".join(f"{i['name']} ({(dt.date.fromisoformat(day) + dt.timedelta(days=inv.days_left(i, day))).strftime('%a')})" for i in soon[:5]) + ".")
         preface += self._flag_lines(flags, h)
         spoiled = inv.spoiled_items(self.db, hid, day)
         if spoiled:
@@ -266,7 +269,7 @@ class Agent:
             return self._reject(hid, plan, a.get("text", text))
         if act == "other":
             return self._say(hid, "🙂 I didn't catch that. Type *help* to see what I understand.")
-        self._say(hid, f"👍 Noted. (Current status: {state}.) I'll keep you posted.")
+        self._say(hid, f"👍 Noted.")
 
     def _relay_to_cook(self, hid: str, text: str) -> None:
         self._cook_say(hid, cookmsgs.render("relay", self._h(hid)["cook_language"], text=text))
@@ -405,7 +408,7 @@ class Agent:
         plan = self._set_menu(hid, plan, ids, reviewed=reviewed, offer=None)
         repo.audit(self.db, hid, "menu_chosen", plan=plan["id"], dishes=plan["chosen"], reviewed=reviewed)
         repo.add_story(self.db, hid, plan["id"], "plan", self._day_text(plan))
-        self._say(hid, f"👍 Got it:\n{self._day_text(plan, bold=True)}\nChecking the kitchen...")
+        self._say(hid, f"👍 Menu set:\n{self._day_text(plan, bold=True)}")
         self._feasibility(hid, plan)
 
     def _reject(self, hid: str, plan: dict, text: str) -> None:
@@ -433,14 +436,12 @@ class Agent:
             plan = self._set_menu(hid, plan, top, reviewed=False,
                                   notes=[*plan["notes"], "Owner did not review this menu."])
             repo.audit(self.db, hid, "cutoff_silent_pick", plan=plan["id"], dishes=top)
-            self._say(hid, f"⏰ No reply by the cutoff, so I'm going with *{_names(top)}* and noting that "
-                           "you didn't review it. I won't order anything on my own for this.")
+            self._say(hid, f"⏰ No reply. Going with *{_names(top)}* (unreviewed). No auto-order.")
             self._feasibility(hid, plan, hold=True)
         elif plan["state"] == "approval":
             repo.update_plan(self.db, hid, plan["id"], state="held")
             repo.audit(self.db, hid, "approval_timeout", plan=plan["id"])
-            self._say(hid, "⏰ No approval before the cutoff, so I'm holding the grocery order. "
-                           "Reply *approve* any time to place it; I'll remind you tomorrow too.")
+            self._say(hid, "⏰ No approval. Order held. Reply *approve* anytime.")
 
     # ------------------------------------------------------------------ S4
     def _feasibility(self, hid: str, plan: dict, hold: bool = False) -> None:
@@ -452,18 +453,16 @@ class Agent:
         if not gaps:
             repo.update_plan(self.db, hid, plan["id"], state="ready", offer=None)
             repo.audit(self.db, hid, "feasible", plan=plan["id"])
-            self._say(hid, f"✅ Everything for *{_names(plan['chosen'])}* is in the kitchen. "
-                           "Feel free to double-check; if something's off, tell me before morning. "
-                           "I'll brief the cook when she arrives.")
+            self._say(hid, f"✅ All in stock for *{_names(plan['chosen'])}*. Cook is briefed on arrival.")
             return
         lines = []
         for g in gaps:
             why = {"absent": "none in stock",
-                   "partial": f"have {fmt_qty(g['have'], g['unit'])}, not enough, so I treat it as missing",
-                   "unconfirmed": "not confirmed, so I can't rely on it"}[g["reason"]]
+                   "partial": f"have {fmt_qty(g['have'], g['unit'])}, short",
+                   "unconfirmed": "unconfirmed"}[g["reason"]]
             lines.append(f"• {g['name']} {fmt_qty(g['need'], g['unit'])} ({why})")
-        self._say(hid, f"🔎 For *{_names(plan['chosen'])}* I'm missing:\n" + "\n".join(lines) +
-                       "\nPlease look in the kitchen. If it's actually there, tell me (e.g. *cream 100 ml*).")
+        self._say(hid, f"🔎 Short for *{_names(plan['chosen'])}*:\n" + "\n".join(lines) +
+                       "\nIf it's there, tell me (*cream 100 ml*).")
         repo.audit(self.db, hid, "gaps_found", plan=plan["id"], gaps=gaps)
         self._gap_resolution(hid, plan["id"], hold=hold)
 
@@ -510,14 +509,14 @@ class Agent:
             auto_note = ""
 
         lines = "\n".join(f"• {i['name']} {fmt_qty(i['qty'], i['unit'])}  ₹{i['price']:.0f}" for i in best["items"])
-        late = ("\n⚠️ This may arrive after the cook; I'll tell her what to start with."
+        late = ("\n⚠️ May arrive after the cook."
                 if best["late"] else "")
         link = self.payment.payment_link(best["total"], "CookSmart groceries")
         new_state = "held" if hold else "approval"
         repo.update_plan(self.db, hid, plan_id, state=new_state)
-        head = "🛒 I'm holding this order for your approval" if hold else "🛒 *Recommended order*"
+        head = "🛒 Order on hold" if hold else "🛒 *Order*"
         self._say(hid, f"{head}: *{best['store']}* · ₹{best['total']:.0f} · ETA {best['eta_minutes']} min\n{lines}"
-                       f"{late}{auto_note}\n\n💳 {link}\nReply *approve* to order, or *no* to hold.",
+                       f"{late}{auto_note}\n💳 {link}\nReply *approve* or *no*.",
                   ["Approve order", "No, hold it"])
 
     def _no_viable_offer(self, hid: str, plan: dict, offers: list[dict], hold: bool) -> None:
@@ -584,10 +583,9 @@ class Agent:
                        [{"item": l["name"], "qty": l["qty"], "unit": l.get("unit", ""), "incoming": True} for l in offer["items"]])
         how = ("You approved it" if auth.kind == "owner_tap" else
                f"I ordered this automatically, within your ₹{min(h['auto_cap'], h['mandate_ceiling']):.0f} limit")
-        late = "\n⚠️ It may arrive after the cook; she'll be told what to start with." if offer.get("late") else ""
-        self._say(hid, f"✅ *Order placed* with {offer['store']}: ₹{offer['total']:.0f}, ETA {offer['eta_minutes']} min.\n"
-                       f"{how}. An accepted order isn't a delivery, so I'll re-check it before the cook "
-                       f"arrives.{late}")
+        late = "\n⚠️ May arrive after the cook." if offer.get("late") else ""
+        self._say(hid, f"✅ *Ordered* from {offer['store']} · ₹{offer['total']:.0f} · ETA {offer['eta_minutes']} min.\n"
+                       f"{how}. I'll recheck it before the cook arrives.{late}")
 
     def check_orders(self, hid: str) -> list[str]:
         """Re-verify accepted orders (cancellation after acceptance). Returns events."""
@@ -600,7 +598,7 @@ class Agent:
                 repo.audit(self.db, hid, "order_cancelled", order=o["id"], store=o["store"])
                 events.append(f"order {o['id']} cancelled")
                 plan = repo.get_plan(self.db, hid, o["plan_id"])
-                self._say(hid, f"🚫 {o['store']} cancelled your order after accepting it. Looking for another option...")
+                self._say(hid, f"🚫 {o['store']} cancelled. Finding another shop.")
                 repo.update_plan(self.db, hid, plan["id"], state="approval", order_id=None)
                 self._gap_resolution(hid, plan["id"], exclude_stores={o["store"]})
         return events
@@ -651,8 +649,7 @@ class Agent:
                 alt = [p for p in props.items if p.feasible]
                 if alt:
                     repo.audit(self.db, hid, "fallback_dish", plan=plan["id"], dishes=alt[0].recipe_ids)
-                    self._say(hid, f"🔁 The groceries aren't coming, so I switched today's menu to "
-                                   f"*{alt[0].name}* (made from stock). Nothing was ordered or swapped silently.")
+                    self._say(hid, f"🔁 Groceries not coming. Switched to *{alt[0].name}* (from stock).")
                     plan = self._set_menu(hid, plan, alt[0].recipe_ids, alt[0].meals)
                     start, wait, switched = plan["chosen"], [], True
         if not plan["chosen"] or (not start and not wait):
@@ -665,8 +662,8 @@ class Agent:
         self._cook_say(hid, self._compose_brief(lang, plan["chosen"], start, wait, switched, daystory.meals_of(plan)))
         plan = repo.update_plan(self.db, hid, plan["id"], state="briefed", brief={"start": start, "wait": wait})
         repo.audit(self.db, hid, "cook_briefed", plan=plan["id"], start=start, wait=wait)
-        self._say(hid, f"👩‍🍳 The cook has been briefed on: *{_names(plan['chosen'])}*." +
-                       (f"\n⏳ Waiting on groceries for: {_names(wait)}." if wait else ""))
+        self._say(hid, f"👩‍🍳 Cook briefed: *{_names(plan['chosen'])}*." +
+                       (f"\n⏳ Waiting on: {_names(wait)}." if wait else ""))
         return plan
 
     def _split_by_stock(self, dish_ids: list[str], stock: dict[str, dict], scale: float) -> tuple[list[str], list[str]]:
@@ -726,7 +723,7 @@ class Agent:
         if hasattr(self.grocery, "mark_delivered"):
             self.grocery.mark_delivered(order["provider_ref"])
         plan = repo.get_plan(self.db, hid, order["plan_id"])
-        self._say(hid, f"📦 Groceries from {order['store']} delivered and added to stock.")
+        self._say(hid, f"📦 Delivered from {order['store']}. Stock updated.")
         if plan["state"] == "briefed" and plan["brief"] and plan["brief"]["wait"]:
             wait = plan["brief"]["wait"]
             self._cook_say(hid, cookmsgs.render("delivered", h["cook_language"], wait=cookmsgs.dish_names(wait)))
@@ -887,8 +884,7 @@ class Agent:
         repo.update_plan(self.db, hid, plan["id"], brief={"start": new, "wait": []})
         repo.audit(self.db, hid, "dish_switched", reason=reason, to=new)
         self._cook_say(hid, cookmsgs.render("switch", lang, dishes=cookmsgs.dish_names(new)))
-        self._say(hid, f"🔁 Because of '{reason}', I switched today's meal to *{_names(new)}* and saved "
-                       "this so future plans account for it.")
+        self._say(hid, f"🔁 {reason} problem. Switched to *{_names(new)}*.")
 
     # ------------------------------------------------------------------ S8
     def end_of_day(self, hid: str) -> None:
@@ -900,7 +896,7 @@ class Agent:
         if self._call_enabled(h) and self._place_call(hid, plan, "reconcile", plan["chosen"], []):
             return
         self._cook_say(hid, cookmsgs.render("eod", h["cook_language"]))
-        self._say(hid, "🌙 Asked the cook what was used today. I'll reconcile stock from her answer.")
+        self._say(hid, "🌙 Asked the cook what was used.")
 
     def serve_meal(self, hid: str, meal: str) -> dict | None:
         """A meal is served: record it and what it used. Stock is reconciled once, at close of day."""
@@ -937,10 +933,9 @@ class Agent:
         repo.audit(self.db, hid, "day_closed", plan=plan["id"], reported=sorted(reported), estimated=estimated)
         msg = f"🌙 *Day closed.* Cooked: {_names(plan['chosen'])}."
         if reported:
-            msg += f"\nFrom the cook: {', '.join(sorted(reported))}."
+            msg += f"\nCook reported: {', '.join(sorted(reported))}."
         if estimated:
-            msg += ("\nI estimated usage for " + ", ".join(estimated) +
-                    " and flagged them to re-confirm tonight, since the cook didn't report them.")
+            msg += "\nEstimated (cook didn't report; recheck): " + ", ".join(estimated) + "."
         self._say(hid, msg)
         return plan
 

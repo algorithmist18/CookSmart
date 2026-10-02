@@ -53,7 +53,7 @@ def test_partial_quantity_counts_as_missing(env):
     env.agent.handle_owner(env.hid, "aloo gobi")   # needs 400 g cauliflower, have 300
     gaps = {g["name"]: g for g in env.plan()["gaps"]}
     assert gaps["cauliflower"]["reason"] == "partial"
-    assert "treat it as missing" in " ".join(env.owner())
+    assert "short" in " ".join(env.owner())
 
 
 def test_owner_correction_resolves_gap(env):
@@ -246,7 +246,7 @@ def test_nothing_ordered_so_cook_gets_dish_from_stock(env):
     assert env.orders() == []
     chosen = env.plan()["chosen"]
     assert chosen and chosen != ["palak_paneer"]
-    assert "switched" in " ".join(env.owner())
+    assert "Switched" in " ".join(env.owner())
 
 
 def test_low_confidence_voice_is_never_acted_on(env):
