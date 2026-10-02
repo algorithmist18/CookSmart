@@ -138,18 +138,23 @@ class Agent:
             return _names(plan["chosen"]) if not bold else f"*{_names(plan['chosen'])}*"
         return "\n".join(f"{i} {k}: " + (f"*{v}*" if bold else v) for i, k, v in parts)
 
-    def _fmt_props(self, props: list[dict]) -> str:
-        lines = []
+    def _fmt_props(self, props: list[dict], avail: dict | None = None, scale: float = 1.0) -> str:
+        """Each option shows all three meals (or says nothing is planned), what it uses from the kitchen, and what to buy."""
+        avail, lines = avail or {}, []
         for n, p in enumerate(props, 1):
-            meals = {k: v for k, v in (p.get("meals") or {}).items() if v}
-            if len(meals) > 1:
-                title = p.get("label") or "Option"
-                rows = "\n".join(f"{daystory.ICON[k]} {_names(meals[k])}" for k in daystory.MEALS if k in meals)
-                head, body = f"*{n} · {title}*", rows
-            else:
-                head, body = f"*{n}. {p['name']}*", ""
-            buy = "🛒 Buy: " + ", ".join(g["name"] for g in p["gaps"]) if not p["feasible"] else "🛒 Nothing to buy"
-            lines.append("\n".join(x for x in (head, body, f"✨ {p['reason']}", buy) if x))
+            meals = p.get("meals") or {"lunch": p["recipe_ids"]}
+            rows = "\n".join(f"{daystory.ICON[k]} {k.title()}: " + (_names(meals[k]) if meals.get(k) else "nothing planned")
+                             for k in daystory.MEALS)
+            have = [i for i in inv.needs_for(p["recipe_ids"], scale) if i in avail]
+            short = {g["name"] for g in p["gaps"]} | set(p.get("extra_buy") or [])
+            have = [i for i in have if i not in short]
+            parts = [f"*{n} · {p.get('label') or 'Option'}*", rows]
+            if p["reason"] and not p["reason"].startswith("Uses stock on hand"):
+                parts.append(f"✨ {p['reason']}")
+            if have:
+                parts.append("📦 From your kitchen: " + ", ".join(have))
+            parts.append("🛒 Buy: " + ", ".join(sorted(short)) if short else "🛒 Nothing to buy")
+            lines.append("\n".join(parts))
         return "\n\n".join(lines)
 
     def _send_proposals(self, hid: str, plan: dict, preface: str = "") -> None:
@@ -158,7 +163,11 @@ class Agent:
         if not props:
             self._say(hid, head + "🤷 No menu: nothing confirmed in stock. Update it (*tomato 4*) or say *all good*.")
             return
-        text = head + "🍽️ *Tomorrow's plan. Pick one:*\n\n" + self._fmt_props(props)
+        h = self._h(hid)
+        text = head + "🍽️ *Tomorrow's plan. Pick one:*\n\n" + self._fmt_props(
+            props, inv.available(self.db, hid, h["sim_date"], plan["day"]), self._scale(plan))
+        if any(not (p.get("meals") or {}).get(k) for p in props for k in ("breakfast", "dinner")):
+            text += "\n\nℹ️ \"Nothing planned\" means I couldn't make that meal from stock I'm sure of. Name your own and I'll order what's missing."
         if plan["notes"]:
             text += "\n\n📝 " + " ".join(plan["notes"])
         text += ("\n\n👉 Tap an option, or reply *1*, *2*, *3*.\n"
@@ -193,13 +202,13 @@ class Agent:
         preface += self._flag_lines(flags, h)
         spoiled = inv.spoiled_items(self.db, hid, day)
         if spoiled:
-            preface.append("🗑️ *Past use-by for tomorrow* (please check and discard): " +
-                           ", ".join(i["name"] for i in spoiled) + ".")
+            preface.append("🗑️ *Probably gone off by tomorrow:* " + ", ".join(i["name"] for i in spoiled) +
+                           ".\nPlease check and bin anything bad.")
         doubtful = inv.doubtful_items(self.db, hid, today, day)
         if doubtful:
-            preface.append("🤔 I'm not sure about these, so I won't plan around them: " +
-                           ", ".join(f"{i['name']} ({fmt_qty(i['qty'], i['unit'])})" for i in doubtful) +
-                           ". Did you use them? Reply *all good* or tell me what changed.")
+            preface.append("🤔 *Not sure if you still have:* " +
+                           ", ".join(f"{i['name']} {fmt_qty(i['qty'], i['unit'])}" for i in doubtful) +
+                           ".\nI left these out of the plan. Reply *all good* if they're still there, or tell me what changed.")
 
         props = self.planner.propose(self._ctx(hid, day, flags=flags))
         plan = repo.update_plan(self.db, hid, plan["id"], proposals=[p.as_dict() for p in props.items],
@@ -667,7 +676,7 @@ class Agent:
                 if alt:
                     repo.audit(self.db, hid, "fallback_dish", plan=plan["id"], dishes=alt[0].recipe_ids)
                     self._say(hid, f"🔁 Groceries not coming. Switched to *{alt[0].name}* (from stock).")
-                    plan = self._set_menu(hid, plan, alt[0].recipe_ids, alt[0].meals)
+                    plan = self._set_menu(hid, plan, alt[0].recipe_ids, alt[0].stock_meals or alt[0].meals)
                     start, wait, switched = plan["chosen"], [], True
         if not plan["chosen"] or (not start and not wait):
             self._cook_say(hid, cookmsgs.render("no_menu", lang))
@@ -896,7 +905,7 @@ class Agent:
             self._cook_say(hid, cookmsgs.render("no_menu", lang))
             return self._say(hid, f"😟 The cook can't make today's meal ({reason}) and nothing at home fits. "
                                   "Please decide: order in, or tell me a dish.")
-        plan = self._set_menu(hid, plan, feasible[0].recipe_ids, feasible[0].meals)
+        plan = self._set_menu(hid, plan, feasible[0].recipe_ids, feasible[0].stock_meals or feasible[0].meals)
         new = plan["chosen"]
         repo.update_plan(self.db, hid, plan["id"], brief={"start": new, "wait": []})
         repo.audit(self.db, hid, "dish_switched", reason=reason, to=new)

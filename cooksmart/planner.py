@@ -48,6 +48,8 @@ class Proposal:
     feasible: bool
     gaps: list[dict]
     repeat_days_ago: int | None = None
+    stock_meals: dict = field(default_factory=dict)   # the same day using only stock on hand (used when a dish must be switched)
+    extra_buy: list = field(default_factory=list)     # items breakfast/dinner need beyond lunch's gaps
     label: str = ""                              # why this option is worth picking ("Saves the most food")
     meals: dict = field(default_factory=dict)    # {"breakfast": [...], "lunch": [...], "dinner": [...]}; recipe_ids is their union
 
@@ -171,17 +173,21 @@ def _take(left: dict, ids: list[str], ctx: PlanContext) -> None:
             left[item]["qty"] = max(0.0, left[item]["qty"] - n["qty"])
 
 
-def _fits(ids: list[str], ctx: PlanContext, left: dict) -> bool:
-    return bool(ids) and not inv.gaps(_needs(ids, ctx), left) and all(allowed(i, ctx) for i in ids)
+def _fits(ids: list[str], ctx: PlanContext, left: dict, max_gaps: int = 0) -> bool:
+    return bool(ids) and len(inv.gaps(_needs(ids, ctx), left)) <= max_gaps and all(allowed(i, ctx) for i in ids)
 
 
-def _pick_breakfast(ctx: PlanContext, used: set[str], left: dict) -> list[str]:
+def _n_gaps(ids: list[str], ctx: PlanContext, left: dict) -> int:
+    return len(inv.gaps(_needs(ids, ctx), left))
+
+
+def _pick_breakfast(ctx: PlanContext, used: set[str], left: dict, max_gaps: int = 0) -> list[str]:
     best = None
     for rid, r in RECIPES.items():
-        if r["course"] != "breakfast" or rid in used or rid in ctx.exclude_ids or not _fits([rid], ctx, left):
+        if r["course"] != "breakfast" or rid in used or rid in ctx.exclude_ids or not _fits([rid], ctx, left, max_gaps):
             continue
         rep = _repeat_days(rid, ctx)
-        key = (-_urgency_of([rid], ctx), 1 if rep is not None and rep <= 3 else 0, r["prep"], rid)
+        key = (_n_gaps([rid], ctx, left), -_urgency_of([rid], ctx), 1 if rep is not None and rep <= 3 else 0, r["prep"], rid)
         if best is None or key < best[0]:
             best = (key, rid)
     return [best[1]] if best else []
@@ -190,7 +196,7 @@ def _pick_breakfast(ctx: PlanContext, used: set[str], left: dict) -> list[str]:
 COMMON = {"onion", "tomato", "atta", "rice", "potato"}
 
 
-def _pick_dinner(ctx: PlanContext, used: set[str], left: dict, lunch: list[str]) -> list[str]:
+def _pick_dinner(ctx: PlanContext, used: set[str], left: dict, lunch: list[str], max_gaps: int = 0) -> list[str]:
     """A complete, lighter meal that differs from lunch: not the same kind of dish, not the same ingredients."""
     lunch_main = lunch[0]
     lunch_items = set(_needs(lunch, ctx)) - COMMON
@@ -201,13 +207,13 @@ def _pick_dinner(ctx: PlanContext, used: set[str], left: dict, lunch: list[str])
         if r["course"] not in _mainable(ctx) - {"breakfast"} or rid in used or rid == lunch_main or not allowed(rid, ctx2):
             continue
         ids = _build_menu(rid, ctx2)
-        if not ids or any(i in used for i in ids) or not _fits(ids, ctx2, left):
+        if not ids or any(i in used for i in ids) or not _fits(ids, ctx2, left, max_gaps):
             continue
         rep = _repeat_days(rid, ctx)
         complete = no_carb_needed or any(RECIPES[i]["course"] in ("carb", "one_pot") for i in ids)
         heavy = any("heavy" in RECIPES[i]["tags"] for i in ids)
         overlap = len((set(_needs(ids, ctx)) - COMMON) & lunch_items)
-        key = (0 if complete else 1, 1 if heavy else 0, overlap, -_urgency_of(ids, ctx2), 1 if r["course"] == RECIPES[lunch_main]["course"] else 0,
+        key = (_n_gaps(ids, ctx2, left), 0 if complete else 1, 1 if heavy else 0, overlap, -_urgency_of(ids, ctx2), 1 if r["course"] == RECIPES[lunch_main]["course"] else 0,
                1 if rep is not None and rep <= 3 else 0, 0 if "light" in r["tags"] else 1, -len(ids), rid)
         if best is None or key < best[0]:
             best = (key, ids)
@@ -215,7 +221,8 @@ def _pick_dinner(ctx: PlanContext, used: set[str], left: dict, lunch: list[str])
 
 
 def plan_day(lunch: list[str], ctx: PlanContext, breakfast: list[str] | None = None, dinner: list[str] | None = None,
-             force_breakfast: bool = False, force_dinner: bool = False, avoid: set[str] = frozenset()) -> dict:
+             force_breakfast: bool = False, force_dinner: bool = False, avoid: set[str] = frozenset(),
+             allow_buy: bool = False) -> dict:
     """Breakfast, lunch and dinner planned separately, each from what is left after the meals before it.
     A suggestion (e.g. from Claude) is used only if it is allowed and makeable from the remaining stock;
     otherwise the heuristic picks. A meal with nothing suitable stays empty rather than forcing a shortage."""
@@ -225,20 +232,28 @@ def plan_day(lunch: list[str], ctx: PlanContext, breakfast: list[str] | None = N
     bf = [i for i in dict.fromkeys(breakfast or []) if i in RECIPES and i not in used]
     if not (bf and force_breakfast) and not _fits(bf, ctx, left):    # the owner's own pick is kept even if it needs shopping
         bf = _pick_breakfast(ctx, used | set(avoid), left) or _pick_breakfast(ctx, used, left)     # `avoid`: other options' dishes, if possible
+    if not bf and allow_buy:                      # nothing in stock makes a breakfast: suggest one that needs a small shop
+        bf = _pick_breakfast(ctx, used | set(avoid), left, 2) or _pick_breakfast(ctx, used, left, 2)
     _take(left, bf, ctx)
     used |= set(bf)
     dn = [i for i in dict.fromkeys(dinner or []) if i in RECIPES and i not in used][:3]
     if not (dn and force_dinner) and not _fits(dn, ctx, left):
         dn = _pick_dinner(ctx, used | set(avoid), left, lunch) or _pick_dinner(ctx, used, left, lunch)
+        if not dn and allow_buy:
+            dn = _pick_dinner(ctx, used | set(avoid), left, lunch, 2) or _pick_dinner(ctx, used, left, lunch, 2)
     return {"breakfast": bf, "lunch": list(lunch), "dinner": dn}
 
 
 def with_day(p: Proposal, ctx: PlanContext, breakfast=None, dinner=None, avoid: set[str] = frozenset()) -> Proposal:
-    """Turn a lunch proposal into a whole-day one. Gaps and feasibility stay those of lunch: the other meals only
-    ever use stock that is already there."""
-    meals = plan_day(p.recipe_ids, ctx, breakfast, dinner, avoid=avoid)
-    union = [i for m in MEAL_ORDER for i in meals[m] if i]
-    return dataclasses.replace(p, recipe_ids=list(dict.fromkeys(union)), meals=meals)
+    """Turn a lunch proposal into a whole-day one. Breakfast and dinner come from stock first; only if stock can't
+    make one do they suggest a dish needing at most two items from the shop, and those join the gaps."""
+    flat = lambda m: list(dict.fromkeys(i for k in MEAL_ORDER for i in m[k] if i))        # noqa: E731
+    stock_only = plan_day(p.recipe_ids, ctx, breakfast, dinner, avoid=avoid)
+    meals = plan_day(p.recipe_ids, ctx, breakfast, dinner, avoid=avoid, allow_buy=True)
+    union = flat(meals)
+    lunch_gaps = {g["name"] for g in p.gaps}
+    extra = [g["name"] for g in inv.gaps(_needs(union, ctx), ctx.stock) if g["name"] not in lunch_gaps]
+    return dataclasses.replace(p, recipe_ids=union, meals=meals, stock_meals=stock_only, extra_buy=extra)
 
 
 def label_options(picks: list[Proposal], ctx: PlanContext) -> list[Proposal]:

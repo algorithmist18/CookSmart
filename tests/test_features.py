@@ -493,3 +493,19 @@ def test_avoid_prefers_a_different_breakfast_but_falls_back_when_there_is_no_oth
     only = {k: v for k, v in base.items() if k not in ("suji", "peas")}
     assert plan_day(["paneer_bhurji", "roti"], PlanContext("2030-01-02", only, preferences={"diet": "vegetarian"}),
                     avoid={"poha"})["breakfast"] == ["poha"]            # no alternative: repeat rather than skip
+
+
+def test_options_always_show_three_meals_and_what_to_buy_even_with_stale_stock():
+    from cooksmart import repo as r
+    app = create_app(Settings(":memory:", "", "m", "", "t"), DB(":memory:"))
+    c = TestClient(app)
+    c.post("/api/households", json={"id": "h"})
+    c.post("/api/h/scenario/classic")
+    r.update_household(app.state.db, "h", sim_date="2026-10-12")          # a week later: most of it is stale
+    c.post("/api/h/trigger/nightly_review")
+    text = c.get("/api/h/owner/messages").json()[0]["text"]
+    assert "Probably gone off by tomorrow" in text and "Not sure if you still have" in text
+    assert text.count("Breakfast:") >= 3 and text.count("Lunch:") >= 3 and text.count("Dinner:") >= 3
+    assert text.count("🛒") >= 3
+    props = c.get("/api/h/owner/state").json()["plan"]["proposals"]
+    assert all(p["meals"]["breakfast"] and p["meals"]["dinner"] for p in props)       # a small shop fills the gaps

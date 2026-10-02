@@ -33,7 +33,7 @@ def test_doubtful_stock_is_not_planned_around(env):
 def test_stale_perishables_are_not_trusted(env):
     repo.update_household(env.db, env.hid, sim_date="2026-10-06")  # 5 days since last confirmation
     env.agent.nightly_review(env.hid)
-    assert "not sure about these" in env.owner()[-1]
+    assert "Not sure if you still have" in env.owner()[-1]
 
 
 def test_rejection_replans_then_offers_ordering_after_two_tries(env):
