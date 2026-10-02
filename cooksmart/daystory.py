@@ -15,7 +15,7 @@ ICON = {"breakfast": "🌅", "lunch": "☀️", "dinner": "🌙"}
 
 STAGES = [  # key, clock, title
     ("review", "9:00 PM", "Night check"), ("plan", "9:10 PM", "Menu picked"), ("shop", "9:30 PM", "Groceries ordered"),
-    ("brief", "6:30 AM", "Cook briefed"), ("delivery", "7:30 AM", "Groceries arrive"),
+    ("delivery", "9:45 PM", "Groceries arrive"), ("brief", "6:30 AM", "Cook briefed"),
     ("breakfast", "8:00 AM", "Breakfast"), ("lunch", "1:00 PM", "Lunch"), ("dinner", "8:30 PM", "Dinner"),
     ("wrapup", "10:00 PM", "Wrap-up")]
 

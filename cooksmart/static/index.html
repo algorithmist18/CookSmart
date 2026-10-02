@@ -419,7 +419,7 @@ $$('#tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 $$('[data-goto]').forEach(b => b.onclick = () => showTab(b.dataset.goto));
 
 /* ================= phones ================= */
-const ownerChips = ['Accept 1', 'approve', 'help', '1 and 2', 'Something else', 'palak paneer', 'cream 100 ml', '6 guests tomorrow', 'fasting tomorrow', 'no dairy',
+const ownerChips = ['Accept 1', 'breakfast poha, lunch dal rice', 'approve', '1 and 2', 'Something else', 'palak paneer', 'cream 100 ml', '6 guests tomorrow', 'fasting tomorrow', 'no dairy',
   'Aarav is allergic to peanuts', 'tell cook: kam mirch daliye', 'change menu', 'call the cook', 'mode auto'];
 const cookChips = ['नमस्ते', 'नमस्ते, मैं आ गई', 'आज क्या बनाना है?', 'हाँ', 'नहीं', 'पनीर खत्म', 'गैस खराब है', 'पालक खराब हो गई', 'खाना बन गया', 'कल मैं नहीं आऊंगी', 'समय कम है'];
 
@@ -783,9 +783,9 @@ function itemEl(i, delta) {
   const left = i.days_left, expCls = i.spoiled || (left !== null && left <= 0) ? 'red' : left !== null && left <= 2 ? 'amber' : '';
   el.className = 'it' + (ghost ? ' ghost' : '') + (!ghost && left !== null && left <= 1 && !i.spoiled ? ' first' : '');
   const n = ghost ? 1 : Math.max(1, Math.min(5, Math.ceil(i.shown / (i.full || 1) * 4)));
-  el.title = i.name + (left !== null ? ` · ${left <= 0 ? 'use today' : left + 1 + ' days left'}` : '');
+  el.title = i.name + (left !== null ? ` · eat ${i.within === 0 ? 'today' : 'within ' + i.within + ' day' + (i.within > 1 ? 's' : '')} (by ${i.use_by})` : '');
   el.innerHTML = `<div class="st">${i.emoji.repeat(n)}</div><span class="nm">${esc(i.name)}</span><span class="qt">${ghost ? '+' + qtyTxt(i.incoming, i.unit) + ' ordered' : qtyTxt(i.shown, i.unit)}</span>` +
-    (ghost || left === null ? '' : `<div class="exp ${expCls}"></div>`) + (!ghost && i.incoming ? `<span class="qt" style="color:var(--accent)">+${qtyTxt(i.incoming, i.unit)} coming</span>` : '');
+    (ghost || left === null ? '' : `<div class="exp ${expCls}"></div>`) + (!ghost && left !== null && left <= 2 && !i.spoiled ? `<span class="qt" style="color:var(--amber);font-weight:600">${i.within === 0 ? 'today' : i.within + 'd'} · ${i.use_by}</span>` : '') + (!ghost && i.incoming ? `<span class="qt" style="color:var(--accent)">+${qtyTxt(i.incoming, i.unit)} coming</span>` : '');
   if (delta) { const d = document.createElement('span'); d.className = 'delta' + (delta > 0 ? ' up' : ''); d.textContent = (delta > 0 ? '+' : '−') + qtyTxt(Math.abs(delta), i.unit); el.appendChild(d); }
   return el;
 }
@@ -798,8 +798,7 @@ function renderFridge(s) {
   $('#pantry').innerHTML = jars.map(i => `<div class="jar"><div class="lvl" style="height:${Math.round(Math.min(1, i.shown / ((i.full || 1) * 2)) * 100)}%"></div><b>${i.emoji} ${esc(i.name)}</b><small>${i.shown > 0 ? qtyTxt(i.shown, i.unit) : 'out'}${i.incoming ? ' · +' + qtyTxt(i.incoming, i.unit) + ' coming' : ''}</small></div>`).join('') || '<span class="emptyfr">empty</span>';
   prevShown = now;
 }
-const STAGE_META = [['review', '9:00 PM', 'Night check'], ['plan', '9:10 PM', 'Menu picked'], ['shop', '9:30 PM', 'Groceries ordered'], ['brief', '6:30 AM', 'Cook briefed'],
-  ['delivery', '7:30 AM', 'Groceries arrive'], ['breakfast', '8:00 AM', 'Breakfast'], ['lunch', '1:00 PM', 'Lunch'], ['dinner', '8:30 PM', 'Dinner'], ['wrapup', '10:00 PM', 'Wrap-up']];
+const STAGE_META = [['review', '9:00 PM', 'Night check'], ['plan', '9:10 PM', 'Menu picked'], ['shop', '9:30 PM', 'Groceries ordered'], ['delivery', '9:45 PM', 'Groceries arrive (+15 min)'], ['brief', '6:30 AM', 'Cook briefed'], ['breakfast', '8:00 AM', 'Breakfast'], ['lunch', '1:00 PM', 'Lunch'], ['dinner', '8:30 PM', 'Dinner'], ['wrapup', '10:00 PM', 'Wrap-up']];
 function renderDay(s) {
   const by = {}; (s.story || []).forEach(e => by[e.stage] = e);
   const last = Math.max(-1, ...STAGE_META.map(([k], i) => by[k] ? i : -1)); let now = true;

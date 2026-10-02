@@ -297,6 +297,13 @@ def parse_owner(text: str) -> dict:
     if prefs:
         return {"action": "prefs", "prefs": prefs}
 
+    mb = re.search(r"\b(?:breakfast|nashta|naashta|nasta)\b(.*?)(?=\blunch\b|$)", low)
+    ml = re.search(r"\blunch\b(.*?)(?=\b(?:breakfast|nashta|naashta|nasta)\b|$)", low)
+    if mb or ml:
+        b, l = (_dishes_in(mb.group(1)) if mb else []), (_dishes_in(ml.group(1)) if ml else [])
+        if b or l:
+            return {"action": "meal_request", "breakfast": b, "lunch": l}
+
     items = find_items(toks)
     have_words = {"have", "hai", "है", "there", "got", "bought", "left", "bacha", "bache", "बचा", "बचे", "stock"}
     zero_words = {"no", "nahi", "nahin", "khatam", "finished", "used", "out", "नहीं", "खत्म"}

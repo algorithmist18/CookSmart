@@ -121,6 +121,9 @@ def next_step(plan: dict | None, orders: list[dict]) -> dict:
     if st == "held":
         return dict(step=5, label="☀️ Morning: cook arrives", action=trig("morning"),
                     hint="The order is on hold. Approve it in the chat, or let the morning come and see the fallback.")
+    if st == "ordered" and open_order:
+        return dict(step=6, label="🛵 Groceries arrive (15 min)", action={"kind": "door", "voice": "cook"},
+                    hint="Rider at the door. Try a stranger's voice from Stock & logs to see the OTP check.")
     if st in ("ready", "ordered"):
         label = "☀️ Morning: cook arrives"
         hint = "The agent re-checks the order, then briefs the cook. The cook can also just message *aa gayi*."
@@ -206,6 +209,10 @@ def create_app(settings: Settings | None = None, db: DB | None = None, platform:
             i["doubtful"] = inv.is_doubtful(i, h["sim_date"])
             i["spoiled"] = inv.is_spoiled(i, cook_day)
             i["days_left"] = inv.days_left(i, cook_day)
+            if i["days_left"] is not None:
+                by = dt.date.fromisoformat(cook_day) + dt.timedelta(days=i["days_left"])
+                i["use_by"] = by.strftime("%a")
+                i["within"] = max(0, (by - dt.date.fromisoformat(h["sim_date"])).days)
         orders = repo.list_orders(db, hid)
         used = daystory.consumed_so_far(plan, float(plan["flags"].get("scale", 1.0))) if plan else {}
         incoming = {}

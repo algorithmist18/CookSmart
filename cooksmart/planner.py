@@ -29,6 +29,7 @@ class PlanContext:
     memory: list[dict] = field(default_factory=list)         # long-term notes
     feedback: list[str] = field(default_factory=list)        # owner's "something else" input
     exclude_ids: set[str] = field(default_factory=set)       # mains the owner already passed on
+    today: str | None = None                                 # when the plan is made (default: the day before cook_day)
 
     @property
     def scale(self) -> float:
@@ -124,10 +125,17 @@ def _needs(ids: list[str], ctx: PlanContext) -> dict[str, dict]:
     return inv.needs_for(ids, ctx.scale)
 
 
+def use_within(ctx: PlanContext, days_left: int) -> str:
+    """'within 2 days (by Sat)': how long the owner has to eat it, counted from when the plan is made."""
+    cook = dt.date.fromisoformat(ctx.cook_day)
+    today = dt.date.fromisoformat(ctx.today) if ctx.today else cook - dt.timedelta(days=1)
+    by = cook + dt.timedelta(days=days_left)
+    n = max(0, (by - today).days)
+    return f"{'today' if n == 0 else 'within ' + str(n) + (' day' if n == 1 else ' days')}, by {by.strftime('%a')}"
+
+
 def _use_by(ctx: PlanContext, item: str) -> str:
-    left = ctx.stock[item]["days_left"]
-    day = dt.date.fromisoformat(ctx.cook_day) + dt.timedelta(days=left)
-    return day.strftime("%a")
+    return use_within(ctx, ctx.stock[item]["days_left"])
 
 
 def menu_name(ids: list[str]) -> str:
@@ -141,7 +149,7 @@ def enrich(ids: list[str], ctx: PlanContext, reason: str | None = None) -> Propo
               and ctx.stock[i]["days_left"] <= 2 and ctx.stock[i]["qty"] >= needs[i]["qty"]]
     if not reason:
         if urgent:
-            reason = "Uses up " + ", ".join(f"{i} (use by {_use_by(ctx, i)})" for i in urgent) + "."
+            reason = "Uses up " + ", ".join(f"{i} ({_use_by(ctx, i)})" for i in urgent) + "."
         else:
             reason = "Uses stock on hand."
         if ctx.scale != 1.0:
@@ -192,7 +200,8 @@ def _pick_dinner(ctx: PlanContext, used: set[str], left: dict, lunch_main: str) 
     return best[1] if best else []
 
 
-def plan_day(lunch: list[str], ctx: PlanContext, breakfast: list[str] | None = None, dinner: list[str] | None = None) -> dict:
+def plan_day(lunch: list[str], ctx: PlanContext, breakfast: list[str] | None = None, dinner: list[str] | None = None,
+             force_breakfast: bool = False) -> dict:
     """Breakfast, lunch and dinner planned separately, each from what is left after the meals before it.
     A suggestion (e.g. from Claude) is used only if it is allowed and makeable from the remaining stock;
     otherwise the heuristic picks. A meal with nothing suitable stays empty rather than forcing a shortage."""
@@ -200,7 +209,7 @@ def plan_day(lunch: list[str], ctx: PlanContext, breakfast: list[str] | None = N
     _take(left, lunch, ctx)
     used = set(lunch)
     bf = [i for i in dict.fromkeys(breakfast or []) if i in RECIPES and i not in used]
-    if not _fits(bf, ctx, left):
+    if not (bf and force_breakfast) and not _fits(bf, ctx, left):    # the owner's own pick is kept even if it needs shopping
         bf = _pick_breakfast(ctx, used, left)
     _take(left, bf, ctx)
     used |= set(bf)

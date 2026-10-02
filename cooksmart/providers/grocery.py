@@ -11,10 +11,12 @@ from typing import Protocol
 from ..recipes import ITEMS
 from .controls import MockControls
 
+DELIVERY_MIN = 15      # every order arrives 15 minutes after it is placed (plus any delay set on the mock)
+
 STORES = [
     # name, price multiplier, base ETA minutes, kind
-    ("QuickCart", 1.10, 25, "hyperlocal"),
-    ("FreshBasket", 1.00, 90, "hyperlocal"),
+    ("QuickCart", 1.10, DELIVERY_MIN, "hyperlocal"),
+    ("FreshBasket", 1.00, DELIVERY_MIN, "hyperlocal"),
 ]
 PARCEL_STORE = ("BulkParcel (via Delhivery)", 0.85, 0, "parcel")
 

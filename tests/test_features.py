@@ -416,3 +416,51 @@ def test_cook_is_told_which_dish_is_for_which_meal():
     if plan["meals"]["breakfast"] or plan["meals"]["dinner"]:
         assert "लंच में" in cook
     assert "₹" not in cook
+
+
+# ------------------------------------------------------------------ ask breakfast + lunch, 15-minute delivery, eat-within window
+def test_owner_is_asked_for_breakfast_and_lunch_and_can_name_both():
+    from cooksmart.nlu import parse_owner
+    a = parse_owner("breakfast poha, lunch dal tadka and roti")
+    assert a == {"action": "meal_request", "breakfast": ["poha"], "lunch": ["dal_tadka", "roti"]}
+    assert parse_owner("lunch rajma chawal")["action"] == "meal_request"
+    c = _day_env()
+    c.post("/api/h/trigger/nightly_review")
+    assert "breakfast and lunch" in " ".join(m["text"] for m in c.get("/api/h/owner/messages").json())
+    c.post("/api/h/owner/message", json={"text": "breakfast poha, lunch dal tadka and roti"})
+    plan = c.get("/api/h/owner/state").json()["plan"]
+    assert plan["meals"]["breakfast"] == ["poha"] and plan["meals"]["lunch"] == ["dal_tadka", "roti"]
+    assert plan["meals"]["dinner"] and not set(plan["meals"]["dinner"]) & {"poha", "dal_tadka", "roti"}
+    assert plan["reviewed"] is True
+
+
+def test_named_breakfast_respects_allergies():
+    c = _day_env()
+    c.post("/api/h/owner/message", json={"text": "Aarav is allergic to peanuts"})
+    c.post("/api/h/trigger/nightly_review")
+    c.post("/api/h/owner/message", json={"text": "breakfast poha, lunch dal tadka"})        # poha is made with peanuts
+    st = c.get("/api/h/owner/state").json()
+    assert st["plan"]["chosen"] == [] or "poha" not in st["plan"]["chosen"]
+    assert "won't plan" in " ".join(m["text"] for m in c.get("/api/h/owner/messages").json())
+
+
+def test_groceries_arrive_in_15_minutes_and_the_next_step_is_the_door():
+    c = _day_env()
+    c.post("/api/h/trigger/nightly_review")
+    c.post("/api/h/owner/message", json={"text": "aloo gobi"})        # cauliflower is short: an order is needed
+    c.post("/api/h/owner/message", json={"text": "approve"})
+    st = c.get("/api/h/owner/state").json()
+    assert st["orders"] and all(o["eta_minutes"] == 15 for o in st["orders"])
+    assert st["next"]["action"]["kind"] == "door"
+    c.post("/api/h/door/arrive", json={"voice": "cook"})
+    st = c.get("/api/h/owner/state").json()
+    assert st["orders"][0]["status"] == "delivered" and "delivery" in [x["stage"] for x in st["story"]]
+
+
+def test_expiring_items_say_within_how_many_days():
+    c = _day_env()
+    c.post("/api/h/trigger/nightly_review")
+    msgs = " ".join(m["text"] for m in c.get("/api/h/owner/messages").json())
+    assert "Eat soon" in msgs and "within 2 days, by" in msgs
+    spinach = next(i for i in c.get("/api/h/owner/state").json()["fridge"] if i["name"] == "spinach")
+    assert spinach["within"] == 2 and spinach["use_by"]

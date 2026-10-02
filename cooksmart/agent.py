@@ -16,7 +16,7 @@ from .channels import MessageChannel
 from .db import DB
 from .nlu import NLU
 from . import profile as prof
-from .planner import PlanContext, Planner
+from .planner import PlanContext, Planner, plan_day, use_within
 from .providers.calls import CallProvider, CallRequest
 from .providers.dispatch import DispatchProvider
 from .providers.grocery import GroceryProvider
@@ -32,7 +32,7 @@ PROBLEMS = ("used_up", "remaining", "low", "spoiled", "cannot_cook")
 
 HELP = (
     "👋 *I'm CookSmart.* Here's what you can tell me:\n"
-    "• *1*, *1 and 2*, *palak paneer*: choose tomorrow's menu\n"
+    "• *1*, *1 and 2*, *breakfast poha, lunch dal rice*: choose tomorrow's menu\n"
     "• *something else*: I'll propose different meals\n"
     "• *cream 100 ml*, *no tomatoes*, *all good*: fix what's in the kitchen\n"
     "• *6 guests tomorrow*, *fasting tomorrow*, *cook is off tomorrow*\n"
@@ -120,7 +120,7 @@ class Agent:
             recent_meals=repo.recent_meals(self.db, hid, _plus(cook_day, -7)),
             preferences=h["preferences"], flags=dict(flags or {}), constraints=list(constraints or []),
             memory=repo.list_memory(self.db, hid), feedback=list(feedback or []),
-            exclude_ids=set(exclude or []))
+            exclude_ids=set(exclude or []), today=h["sim_date"])
 
     def _plan_ctx(self, hid: str, plan: dict, **kw) -> PlanContext:
         return self._ctx(hid, plan["day"], flags=plan["flags"], **kw)
@@ -160,7 +160,7 @@ class Agent:
         text = head + "🍽️ *Tomorrow*\n" + self._fmt_props(props)
         if plan["notes"]:
             text += "\n\n📝 " + " ".join(plan["notes"])
-        text += "\n\nReply *1*, *2* or *1 and 2*, or name a dish."
+        text += "\n\n🍳 *What do you want for breakfast and lunch?* Reply *1*, *2*, or e.g. *breakfast poha, lunch dal rice*. Dinner I'll plan."
         buttons = [f"Accept {n}" for n in range(1, len(props) + 1)] + ["Something else"]
         self._say(hid, text, buttons)
 
@@ -186,7 +186,8 @@ class Agent:
         soon = sorted((i for i in inv.list_items(self.db, hid) if inv.days_left(i, day) is not None and inv.days_left(i, day) <= 2
                        and not inv.is_spoiled(i, day)), key=lambda i: inv.days_left(i, day))
         if soon:
-            preface.append("🧊 Use soon: " + ", ".join(f"{i['name']} ({(dt.date.fromisoformat(day) + dt.timedelta(days=inv.days_left(i, day))).strftime('%a')})" for i in soon[:5]) + ".")
+            ctx0 = PlanContext(cook_day=day, stock={}, today=today)
+            preface.append("🧊 Eat soon:\n" + "\n".join(f"• {i['name']}: {use_within(ctx0, inv.days_left(i, day))}" for i in soon[:5]))
         preface += self._flag_lines(flags, h)
         spoiled = inv.spoiled_items(self.db, hid, day)
         if spoiled:
@@ -253,6 +254,8 @@ class Agent:
                                   "Type *help* to see what I can do.")
 
         state = plan["state"]
+        if act == "meal_request" and state in ("review", "approval", "held", "ready"):
+            return self._choose_meals(hid, plan, a["breakfast"], a["lunch"])
         if act == "dish_request" and state in ("review", "approval", "held", "ready"):
             return self._choose(hid, plan, a["dishes"], reviewed=True)
         if act == "choose" and state == "review":
@@ -396,7 +399,18 @@ class Agent:
         union = [d for m in ("lunch", "dinner", "breakfast") for d in meals[m]]
         return repo.update_plan(self.db, hid, plan["id"], chosen=list(dict.fromkeys(union)), meals=meals, **fields)
 
-    def _choose(self, hid: str, plan: dict, ids: list[str], reviewed: bool) -> None:
+    def _choose_meals(self, hid: str, plan: dict, breakfast: list[str], lunch: list[str]) -> None:
+        """The owner named breakfast and/or lunch. What they leave out comes from option 1; dinner is always planned."""
+        top = (plan["proposals"] or [{}])[0].get("meals") or {}
+        lunch = lunch or top.get("lunch") or []
+        if not lunch:
+            return self._say(hid, "Which lunch? Name a dish, e.g. *lunch dal rice*.")
+        breakfast = breakfast or top.get("breakfast") or []
+        dinner = plan_day(lunch, self._plan_ctx(hid, plan), breakfast, force_breakfast=True)["dinner"]
+        meals = {"breakfast": breakfast, "lunch": lunch, "dinner": dinner}
+        self._choose(hid, plan, [d for m in ("lunch", "dinner", "breakfast") for d in meals[m]], reviewed=True, meals=meals)
+
+    def _choose(self, hid: str, plan: dict, ids: list[str], reviewed: bool, meals: dict | None = None) -> None:
         conflicts = prof.allergen_conflicts(ids, self._h(hid)["preferences"])
         if conflicts:                                     # a hard stop, not a warning
             c = conflicts[0]
@@ -405,7 +419,7 @@ class Agent:
                            "allergy first if it's wrong.")
             repo.audit(self.db, hid, "allergy_block", conflicts=conflicts)
             return
-        plan = self._set_menu(hid, plan, ids, reviewed=reviewed, offer=None)
+        plan = self._set_menu(hid, plan, ids, meals, reviewed=reviewed, offer=None)
         repo.audit(self.db, hid, "menu_chosen", plan=plan["id"], dishes=plan["chosen"], reviewed=reviewed)
         repo.add_story(self.db, hid, plan["id"], "plan", self._day_text(plan))
         self._say(hid, f"👍 Menu set:\n{self._day_text(plan, bold=True)}")
