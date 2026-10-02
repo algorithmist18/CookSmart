@@ -150,7 +150,10 @@ def enrich(ids: list[str], ctx: PlanContext, reason: str | None = None) -> Propo
               and ctx.stock[i]["days_left"] <= 2 and ctx.stock[i]["qty"] >= needs[i]["qty"]]
     if not reason:
         if urgent:
-            reason = "Uses up " + ", ".join(f"{i} ({_use_by(ctx, i)})" for i in urgent) + "."
+            by_window: dict[str, list[str]] = {}
+            for i in urgent:
+                by_window.setdefault(_use_by(ctx, i), []).append(i)
+            reason = "Uses up " + "; ".join(f"{', '.join(v)} ({w})" for w, v in by_window.items()) + "."
         else:
             reason = "Uses stock on hand."
         if ctx.scale != 1.0:

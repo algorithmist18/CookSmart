@@ -145,12 +145,12 @@ class Agent:
             if len(meals) > 1:
                 title = p.get("label") or "Option"
                 rows = "\n".join(f"{daystory.ICON[k]} {_names(meals[k])}" for k in daystory.MEALS if k in meals)
-                lines.append(f"*{n} · {title}*\n{rows}\n↳ {p['reason']}")
+                head, body = f"*{n} · {title}*", rows
             else:
-                lines.append(f"*{n}. {p['name']}*\n   {p['reason']}")
-            if not p["feasible"]:
-                lines.append("   🛒 To buy: " + ", ".join(g["name"] for g in p["gaps"]))
-        return "\n".join(lines)
+                head, body = f"*{n}. {p['name']}*", ""
+            buy = "🛒 Buy: " + ", ".join(g["name"] for g in p["gaps"]) if not p["feasible"] else "🛒 Nothing to buy"
+            lines.append("\n".join(x for x in (head, body, f"✨ {p['reason']}", buy) if x))
+        return "\n\n".join(lines)
 
     def _send_proposals(self, hid: str, plan: dict, preface: str = "") -> None:
         props = plan["proposals"]
@@ -158,10 +158,11 @@ class Agent:
         if not props:
             self._say(hid, head + "🤷 No menu: nothing confirmed in stock. Update it (*tomato 4*) or say *all good*.")
             return
-        text = head + "🍽️ *Tomorrow*\n" + self._fmt_props(props)
+        text = head + "🍽️ *Tomorrow's plan. Pick one:*\n\n" + self._fmt_props(props)
         if plan["notes"]:
             text += "\n\n📝 " + " ".join(plan["notes"])
-        text += "\n\n🍳 *What do you want for breakfast, lunch and dinner?* Reply *1*, *2*, or e.g. *breakfast poha, lunch dal rice, dinner khichdi*. Skipped meals come from option 1."
+        text += ("\n\n👉 Tap an option, or reply *1*, *2*, *3*.\n"
+                 "Want your own? e.g. *breakfast poha, lunch dal rice, dinner khichdi*. Any meal you skip comes from option 1.")
         buttons = [f"Accept {n}" for n in range(1, len(props) + 1)] + ["Something else"]
         self._say(hid, text, buttons)
 

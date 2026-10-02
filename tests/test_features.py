@@ -427,7 +427,7 @@ def test_owner_is_asked_for_breakfast_and_lunch_and_can_name_both():
     assert parse_owner("lunch rajma chawal")["action"] == "meal_request"
     c = _day_env()
     c.post("/api/h/trigger/nightly_review")
-    assert "breakfast, lunch and dinner" in " ".join(m["text"] for m in c.get("/api/h/owner/messages").json())
+    assert "your own" in " ".join(m["text"] for m in c.get("/api/h/owner/messages").json())
     c.post("/api/h/owner/message", json={"text": "breakfast poha, lunch dal tadka and roti"})
     plan = c.get("/api/h/owner/state").json()["plan"]
     assert plan["meals"]["breakfast"] == ["poha"] and plan["meals"]["lunch"] == ["dal_tadka", "roti"]
