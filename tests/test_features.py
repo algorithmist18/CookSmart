@@ -379,7 +379,7 @@ def test_each_option_plans_three_separate_meals_from_stock():
         assert p["recipe_ids"][0] == m["lunch"][0]
         assert p["recipe_ids"] == list(dict.fromkeys(m["lunch"] + m["dinner"] + m["breakfast"]))
     msgs = " ".join(m["text"] for m in c.get("/api/h/owner/messages").json())
-    assert "(lunch)" in msgs and "🌅" in msgs and "🌙" in msgs
+    assert "🌅" in msgs and "☀️" in msgs and "🌙" in msgs and "Saves the most food" in msgs
 
 
 def test_extra_meals_never_add_shortages_or_allergens():
@@ -422,11 +422,12 @@ def test_cook_is_told_which_dish_is_for_which_meal():
 def test_owner_is_asked_for_breakfast_and_lunch_and_can_name_both():
     from cooksmart.nlu import parse_owner
     a = parse_owner("breakfast poha, lunch dal tadka and roti")
-    assert a == {"action": "meal_request", "breakfast": ["poha"], "lunch": ["dal_tadka", "roti"]}
+    assert a == {"action": "meal_request", "breakfast": ["poha"], "lunch": ["dal_tadka", "roti"], "dinner": []}
+    assert parse_owner("dinner khichdi")["action"] in ("meal_request", "dish_request", "other")
     assert parse_owner("lunch rajma chawal")["action"] == "meal_request"
     c = _day_env()
     c.post("/api/h/trigger/nightly_review")
-    assert "breakfast and lunch" in " ".join(m["text"] for m in c.get("/api/h/owner/messages").json())
+    assert "breakfast, lunch and dinner" in " ".join(m["text"] for m in c.get("/api/h/owner/messages").json())
     c.post("/api/h/owner/message", json={"text": "breakfast poha, lunch dal tadka and roti"})
     plan = c.get("/api/h/owner/state").json()["plan"]
     assert plan["meals"]["breakfast"] == ["poha"] and plan["meals"]["lunch"] == ["dal_tadka", "roti"]
@@ -464,3 +465,31 @@ def test_expiring_items_say_within_how_many_days():
     assert "Eat soon" in msgs and "within 2 days, by" in msgs
     spinach = next(i for i in c.get("/api/h/owner/state").json()["fridge"] if i["name"] == "spinach")
     assert spinach["within"] == 2 and spinach["use_by"]
+
+
+def test_options_are_distinct_and_dinner_can_be_named():
+    c = _day_env()
+    c.post("/api/h/trigger/nightly_review")
+    props = c.get("/api/h/owner/state").json()["plan"]["proposals"]
+    labels = [p["label"] for p in props]
+    assert len(set(labels)) == len(labels) and all(labels)
+    dn = [tuple(p["meals"]["dinner"]) for p in props if p["meals"]["dinner"]]
+    assert len(set(dn)) == len(dn), "options should not repeat the same dinner"
+    c.post("/api/h/owner/message", json={"text": "breakfast upma, lunch dal tadka, dinner aloo gobi"})
+    m = c.get("/api/h/owner/state").json()["plan"]["meals"]
+    assert m["breakfast"] == ["upma"] and m["lunch"] == ["dal_tadka"] and m["dinner"] == ["aloo_gobi"]
+
+
+def test_avoid_prefers_a_different_breakfast_but_falls_back_when_there_is_no_other():
+    from cooksmart.planner import PlanContext, plan_day
+    base = {"onion": {"qty": 6, "unit": "pcs", "days_left": None}, "peanuts": {"qty": 100, "unit": "g", "days_left": None},
+            "poha": {"qty": 500, "unit": "g", "days_left": None}, "suji": {"qty": 500, "unit": "g", "days_left": None},
+            "peas": {"qty": 250, "unit": "g", "days_left": None}, "paneer": {"qty": 400, "unit": "g", "days_left": 2},
+            "atta": {"qty": 1000, "unit": "g", "days_left": None}, "tomato": {"qty": 4, "unit": "pcs", "days_left": 2}}
+    ctx = PlanContext("2030-01-02", base, preferences={"diet": "vegetarian"})
+    first = plan_day(["paneer_bhurji", "roti"], ctx)["breakfast"]
+    other = plan_day(["paneer_bhurji", "roti"], ctx, avoid=set(first))["breakfast"]
+    assert first and other and other != first
+    only = {k: v for k, v in base.items() if k not in ("suji", "peas")}
+    assert plan_day(["paneer_bhurji", "roti"], PlanContext("2030-01-02", only, preferences={"diet": "vegetarian"}),
+                    avoid={"poha"})["breakfast"] == ["poha"]            # no alternative: repeat rather than skip

@@ -32,7 +32,7 @@ PROBLEMS = ("used_up", "remaining", "low", "spoiled", "cannot_cook")
 
 HELP = (
     "👋 *I'm CookSmart.* Here's what you can tell me:\n"
-    "• *1*, *1 and 2*, *breakfast poha, lunch dal rice*: choose tomorrow's menu\n"
+    "• *1*, *1 and 2*, *breakfast poha, lunch dal rice, dinner khichdi*: choose tomorrow's menu\n"
     "• *something else*: I'll propose different meals\n"
     "• *cream 100 ml*, *no tomatoes*, *all good*: fix what's in the kitchen\n"
     "• *6 guests tomorrow*, *fasting tomorrow*, *cook is off tomorrow*\n"
@@ -143,8 +143,9 @@ class Agent:
         for n, p in enumerate(props, 1):
             meals = {k: v for k, v in (p.get("meals") or {}).items() if v}
             if len(meals) > 1:
-                side = " · ".join(f"{daystory.ICON[k]} {_names(meals[k])}" for k in ("breakfast", "dinner") if k in meals)
-                lines.append(f"*{n}. {_names(meals['lunch'])}* (lunch)\n   {side}\n   {p['reason']}")
+                title = p.get("label") or "Option"
+                rows = "\n".join(f"{daystory.ICON[k]} {_names(meals[k])}" for k in daystory.MEALS if k in meals)
+                lines.append(f"*{n} · {title}*\n{rows}\n↳ {p['reason']}")
             else:
                 lines.append(f"*{n}. {p['name']}*\n   {p['reason']}")
             if not p["feasible"]:
@@ -160,7 +161,7 @@ class Agent:
         text = head + "🍽️ *Tomorrow*\n" + self._fmt_props(props)
         if plan["notes"]:
             text += "\n\n📝 " + " ".join(plan["notes"])
-        text += "\n\n🍳 *What do you want for breakfast and lunch?* Reply *1*, *2*, or e.g. *breakfast poha, lunch dal rice*. Dinner I'll plan."
+        text += "\n\n🍳 *What do you want for breakfast, lunch and dinner?* Reply *1*, *2*, or e.g. *breakfast poha, lunch dal rice, dinner khichdi*. Skipped meals come from option 1."
         buttons = [f"Accept {n}" for n in range(1, len(props) + 1)] + ["Something else"]
         self._say(hid, text, buttons)
 
@@ -255,7 +256,7 @@ class Agent:
 
         state = plan["state"]
         if act == "meal_request" and state in ("review", "approval", "held", "ready"):
-            return self._choose_meals(hid, plan, a["breakfast"], a["lunch"])
+            return self._choose_meals(hid, plan, a["breakfast"], a["lunch"], a.get("dinner", []))
         if act == "dish_request" and state in ("review", "approval", "held", "ready"):
             return self._choose(hid, plan, a["dishes"], reviewed=True)
         if act == "choose" and state == "review":
@@ -399,14 +400,15 @@ class Agent:
         union = [d for m in ("lunch", "dinner", "breakfast") for d in meals[m]]
         return repo.update_plan(self.db, hid, plan["id"], chosen=list(dict.fromkeys(union)), meals=meals, **fields)
 
-    def _choose_meals(self, hid: str, plan: dict, breakfast: list[str], lunch: list[str]) -> None:
-        """The owner named breakfast and/or lunch. What they leave out comes from option 1; dinner is always planned."""
+    def _choose_meals(self, hid: str, plan: dict, breakfast: list[str], lunch: list[str], dinner: list[str]) -> None:
+        """The owner named some meals. What they leave out comes from option 1."""
         top = (plan["proposals"] or [{}])[0].get("meals") or {}
         lunch = lunch or top.get("lunch") or []
         if not lunch:
             return self._say(hid, "Which lunch? Name a dish, e.g. *lunch dal rice*.")
         breakfast = breakfast or top.get("breakfast") or []
-        dinner = plan_day(lunch, self._plan_ctx(hid, plan), breakfast, force_breakfast=True)["dinner"]
+        dinner = plan_day(lunch, self._plan_ctx(hid, plan), breakfast, dinner or top.get("dinner"), force_breakfast=True,
+                          force_dinner=bool(dinner))["dinner"]
         meals = {"breakfast": breakfast, "lunch": lunch, "dinner": dinner}
         self._choose(hid, plan, [d for m in ("lunch", "dinner", "breakfast") for d in meals[m]], reviewed=True, meals=meals)
 

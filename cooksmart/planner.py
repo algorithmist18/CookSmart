@@ -48,6 +48,7 @@ class Proposal:
     feasible: bool
     gaps: list[dict]
     repeat_days_ago: int | None = None
+    label: str = ""                              # why this option is worth picking ("Saves the most food")
     meals: dict = field(default_factory=dict)    # {"breakfast": [...], "lunch": [...], "dinner": [...]}; recipe_ids is their union
 
     def as_dict(self) -> dict:
@@ -201,7 +202,7 @@ def _pick_dinner(ctx: PlanContext, used: set[str], left: dict, lunch_main: str) 
 
 
 def plan_day(lunch: list[str], ctx: PlanContext, breakfast: list[str] | None = None, dinner: list[str] | None = None,
-             force_breakfast: bool = False) -> dict:
+             force_breakfast: bool = False, force_dinner: bool = False, avoid: set[str] = frozenset()) -> dict:
     """Breakfast, lunch and dinner planned separately, each from what is left after the meals before it.
     A suggestion (e.g. from Claude) is used only if it is allowed and makeable from the remaining stock;
     otherwise the heuristic picks. A meal with nothing suitable stays empty rather than forcing a shortage."""
@@ -210,21 +211,37 @@ def plan_day(lunch: list[str], ctx: PlanContext, breakfast: list[str] | None = N
     used = set(lunch)
     bf = [i for i in dict.fromkeys(breakfast or []) if i in RECIPES and i not in used]
     if not (bf and force_breakfast) and not _fits(bf, ctx, left):    # the owner's own pick is kept even if it needs shopping
-        bf = _pick_breakfast(ctx, used, left)
+        bf = _pick_breakfast(ctx, used | set(avoid), left) or _pick_breakfast(ctx, used, left)     # `avoid`: other options' dishes, if possible
     _take(left, bf, ctx)
     used |= set(bf)
     dn = [i for i in dict.fromkeys(dinner or []) if i in RECIPES and i not in used][:3]
-    if not _fits(dn, ctx, left):
-        dn = _pick_dinner(ctx, used, left, lunch[0])
+    if not (dn and force_dinner) and not _fits(dn, ctx, left):
+        dn = _pick_dinner(ctx, used | set(avoid), left, lunch[0]) or _pick_dinner(ctx, used, left, lunch[0])
     return {"breakfast": bf, "lunch": list(lunch), "dinner": dn}
 
 
-def with_day(p: Proposal, ctx: PlanContext, breakfast=None, dinner=None) -> Proposal:
+def with_day(p: Proposal, ctx: PlanContext, breakfast=None, dinner=None, avoid: set[str] = frozenset()) -> Proposal:
     """Turn a lunch proposal into a whole-day one. Gaps and feasibility stay those of lunch: the other meals only
     ever use stock that is already there."""
-    meals = plan_day(p.recipe_ids, ctx, breakfast, dinner)
+    meals = plan_day(p.recipe_ids, ctx, breakfast, dinner, avoid=avoid)
     union = [i for m in MEAL_ORDER for i in meals[m] if i]
     return dataclasses.replace(p, recipe_ids=list(dict.fromkeys(union)), meals=meals)
+
+
+def label_options(picks: list[Proposal], ctx: PlanContext) -> list[Proposal]:
+    """Give each option its own reason to be picked, so three options read as three different choices."""
+    if len(picks) == 1:
+        return [dataclasses.replace(picks[0], label="Best fit")]
+    scored = {
+        "Saves the most food": [_urgency_of(p.recipe_ids, ctx) for p in picks],
+        "Quickest day": [-sum(RECIPES[r]["prep"] for r in p.recipe_ids) for p in picks],
+        "Lightest day": [sum(1 for r in p.recipe_ids if "light" in RECIPES[r]["tags"]) - sum(1 for r in p.recipe_ids if "heavy" in RECIPES[r]["tags"]) for p in picks]}
+    labels: dict[int, str] = {}
+    for name, vals in scored.items():
+        order = sorted((i for i in range(len(picks)) if i not in labels), key=lambda i: (-vals[i], i))
+        if order and (vals[order[0]] > min(vals) or name == "Saves the most food"):
+            labels[order[0]] = name
+    return [dataclasses.replace(p, label=labels.get(i, "Something different")) for i, p in enumerate(picks)]
 
 
 def day_name(meals: dict) -> str:
@@ -332,7 +349,12 @@ def heuristic_propose(ctx: PlanContext, n: int = 3) -> Proposals:
         cands.remove(best)
         picked.append(best[0])
         covered |= {i for i, w in best[2].items() if w > 0}
-    picks = [with_day(enrich(ids, ctx), ctx) for ids in picked]
+    picks, seen = [], set()
+    for ids in picked:                                  # breakfast and dinner differ between options where the stock allows
+        p = with_day(enrich(ids, ctx), ctx, avoid=seen)
+        seen |= set(p.meals["breakfast"]) | set(p.meals["dinner"])
+        picks.append(p)
+    picks = label_options(picks, ctx)
     return Proposals(picks, tradeoffs(picks, ctx), "heuristic")
 
 
@@ -421,7 +443,7 @@ class ClaudePlanner:
                     picks.append(with_day(enrich(ids[:3], ctx, m.get("reason")), ctx, m.get("breakfast_ids"), m.get("dinner_ids")))
         if not picks:
             raise ValueError("Claude returned no valid menus")
-        picks = picks[:n]
+        picks = label_options(picks[:n], ctx)
         return Proposals(picks, tradeoffs(picks, ctx), "claude")
 
 
