@@ -187,7 +187,14 @@ def _pick_breakfast(ctx: PlanContext, used: set[str], left: dict) -> list[str]:
     return [best[1]] if best else []
 
 
-def _pick_dinner(ctx: PlanContext, used: set[str], left: dict, lunch_main: str) -> list[str]:
+COMMON = {"onion", "tomato", "atta", "rice", "potato"}
+
+
+def _pick_dinner(ctx: PlanContext, used: set[str], left: dict, lunch: list[str]) -> list[str]:
+    """A complete, lighter meal that differs from lunch: not the same kind of dish, not the same ingredients."""
+    lunch_main = lunch[0]
+    lunch_items = set(_needs(lunch, ctx)) - COMMON
+    no_carb_needed = _no_heat(ctx) or bool(ctx.flags.get("fasting"))
     ctx2 = dataclasses.replace(ctx, stock=left, exclude_ids=set(ctx.exclude_ids) | used)
     best = None
     for rid, r in RECIPES.items():
@@ -197,8 +204,11 @@ def _pick_dinner(ctx: PlanContext, used: set[str], left: dict, lunch_main: str) 
         if not ids or any(i in used for i in ids) or not _fits(ids, ctx2, left):
             continue
         rep = _repeat_days(rid, ctx)
-        key = (-_urgency_of(ids, ctx2), 1 if rep is not None and rep <= 3 else 0,
-               0 if "light" in r["tags"] else 1, -len(ids), rid)
+        complete = no_carb_needed or any(RECIPES[i]["course"] in ("carb", "one_pot") for i in ids)
+        heavy = any("heavy" in RECIPES[i]["tags"] for i in ids)
+        overlap = len((set(_needs(ids, ctx)) - COMMON) & lunch_items)
+        key = (0 if complete else 1, 1 if heavy else 0, overlap, -_urgency_of(ids, ctx2), 1 if r["course"] == RECIPES[lunch_main]["course"] else 0,
+               1 if rep is not None and rep <= 3 else 0, 0 if "light" in r["tags"] else 1, -len(ids), rid)
         if best is None or key < best[0]:
             best = (key, ids)
     return best[1] if best else []
@@ -219,7 +229,7 @@ def plan_day(lunch: list[str], ctx: PlanContext, breakfast: list[str] | None = N
     used |= set(bf)
     dn = [i for i in dict.fromkeys(dinner or []) if i in RECIPES and i not in used][:3]
     if not (dn and force_dinner) and not _fits(dn, ctx, left):
-        dn = _pick_dinner(ctx, used | set(avoid), left, lunch[0]) or _pick_dinner(ctx, used, left, lunch[0])
+        dn = _pick_dinner(ctx, used | set(avoid), left, lunch) or _pick_dinner(ctx, used, left, lunch)
     return {"breakfast": bf, "lunch": list(lunch), "dinner": dn}
 
 

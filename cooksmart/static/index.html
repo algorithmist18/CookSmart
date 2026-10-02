@@ -533,6 +533,9 @@ async function pump() {
 async function pullMessages() {
   const [o, c] = await Promise.all([api(`${HID}/owner/messages?after=${ptr.owner}`), api(`${HID}/cook/messages?after=${ptr.cook}`)]);
   const all = [...o.map(m => ({ ch: 'owner', m })), ...c.map(m => ({ ch: 'cook', m }))].sort((a, b) => a.m.id - b.m.id);
+  const fresh = { owner: false, cook: false }; all.forEach(x => { if (x.m.sender === 'agent') fresh[x.ch] = true; });
+  Object.keys(fresh).forEach(ch => { if (fresh[ch]) phones[ch].clear(); });                    // a new agent turn replaces the old chat
+  for (let i = queue.length - 1; i >= 0; i--) if (fresh[queue[i].ch]) queue.splice(i, 1);
   all.forEach(x => { ptr[x.ch] = Math.max(ptr[x.ch], x.m.id); queue.push(x); }); if (all.length) pump();
 }
 
