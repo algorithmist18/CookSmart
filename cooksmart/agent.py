@@ -152,25 +152,6 @@ class Agent:
             lines.append("\n".join(parts))
         return "\n\n".join(lines)
 
-    def _fmt_props(self, props: list[dict], avail: dict | None = None, scale: float = 1.0) -> str:
-        """Each option shows all three meals (or says nothing is planned), what it uses from the kitchen, and what to buy."""
-        avail, lines = avail or {}, []
-        for n, p in enumerate(props, 1):
-            meals = p.get("meals") or {"lunch": p["recipe_ids"]}
-            rows = "\n".join(f"{daystory.ICON[k]} {k.title()}: " + (_names(meals[k]) if meals.get(k) else "nothing planned")
-                             for k in daystory.MEALS)
-            have = [i for i in inv.needs_for(p["recipe_ids"], scale) if i in avail]
-            short = {g["name"] for g in p["gaps"]} | set(p.get("extra_buy") or [])
-            have = [i for i in have if i not in short]
-            parts = [f"*{n} · {p.get('label') or 'Option'}*", rows]
-            if p["reason"] and not p["reason"].startswith("Uses stock on hand"):
-                parts.append(f"✨ {p['reason']}")
-            if have:
-                parts.append("📦 From your kitchen: " + ", ".join(have))
-            parts.append("🛒 Buy: " + ", ".join(sorted(short)) if short else "🛒 Nothing to buy")
-            lines.append("\n".join(parts))
-        return "\n\n".join(lines)
-
     def _send_proposals(self, hid: str, plan: dict, preface: str = "") -> None:
         props = plan["proposals"]
         head = (preface + "\n\n") if preface else ""
@@ -185,16 +166,7 @@ class Agent:
             text += (f"\n\n👉 Tap an option, or reply *1*, *2*, *3*. Or name your own dish. *skip* = no {stage}.")
             buttons = [f"Accept {n}" for n in range(1, len(props) + 1)] + [f"Skip {stage}", "Something else"]
             return self._say(hid, text, buttons)
-        text = head + "🍽️ *Tomorrow's plan. Pick one:*\n\n" + self._fmt_props(
-            props, inv.available(self.db, hid, h["sim_date"], plan["day"]), self._scale(plan))
-        if any(not (p.get("meals") or {}).get(k) for p in props for k in ("breakfast", "dinner")):
-            text += "\n\nℹ️ \"Nothing planned\" means I couldn't make that meal from stock I'm sure of. Name your own and I'll order what's missing."
-        if plan["notes"]:
-            text += "\n\n📝 " + " ".join(plan["notes"])
-        text += ("\n\n👉 Tap an option, or reply *1*, *2*, *3*.\n"
-                 "Want your own? e.g. *breakfast poha, lunch dal rice, dinner khichdi*. Any meal you skip comes from option 1.")
-        buttons = [f"Accept {n}" for n in range(1, len(props) + 1)] + ["Something else"]
-        self._say(hid, text, buttons)
+        self._begin_stage(hid, plan["id"], "breakfast", preface)        # always step by step, never a whole-day list
 
     # ------------------------------------------------------------------ S1 + S2
     def nightly_review(self, hid: str) -> dict:
@@ -259,8 +231,9 @@ class Agent:
 
     def _replan(self, hid: str, plan_id: int, preface: str = "") -> None:
         plan = repo.get_plan(self.db, hid, plan_id)
-        if plan["stage"]:
-            return self._begin_stage(hid, plan_id, plan["stage"], preface)
+        if not plan["stage"]:                                          # a finished or older plan: start the meals again
+            repo.update_plan(self.db, hid, plan_id, meals={})
+        return self._begin_stage(hid, plan_id, plan["stage"] or "breakfast", preface)
         props = self.planner.propose(self._plan_ctx(hid, plan, feedback=plan["feedback"], exclude=plan["excluded"]))
         plan = repo.update_plan(self.db, hid, plan_id, proposals=[p.as_dict() for p in props.items],
                                 notes=props.tradeoffs)
@@ -668,16 +641,10 @@ class Agent:
             self._say(hid, f"😕 I couldn't find a good order for the missing items ({problem}). Nothing ordered, "
                            "nothing substituted. I'll look again before the cook arrives.")
             return
-        props = self.planner.propose(self._plan_ctx(hid, plan, exclude=[*plan["excluded"], plan["chosen"][0]]))
-        feasible = [p for p in props.items if p.feasible]
         repo.update_plan(self.db, hid, plan["id"], state="review", chosen=[], meals={}, reviewed=False, offer=None,
-                         proposals=[p.as_dict() for p in feasible])
-        plan = repo.get_plan(self.db, hid, plan["id"])
-        msg = f"😕 I can't get the missing items ({problem}). I haven't ordered or swapped anything."
-        if feasible:
-            self._send_proposals(hid, plan, msg + " Instead, you could make this from what's at home:")
-        else:
-            self._say(hid, msg + " I also can't find a meal that works with current stock; please advise.")
+                         excluded=[*plan["excluded"], plan["chosen"][0]], stage="")
+        self._begin_stage(hid, plan["id"], "breakfast",
+                          f"😕 I can't get the missing items ({problem}). Nothing ordered or swapped. Let's choose again.")
 
     def _approve(self, hid: str, plan: dict) -> None:
         offer = plan["offer"]

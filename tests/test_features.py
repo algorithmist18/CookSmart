@@ -570,3 +570,21 @@ def test_stale_stock_still_gets_options_with_a_small_shop_for_each_meal():
     first = _texts(c)[0]
     assert "Probably gone off by tomorrow" in first and "Not sure if you still have" in first
     assert "Breakfast options" in first and first.count("🛒") >= 1
+
+
+def test_every_path_that_re_asks_goes_step_by_step_never_a_whole_day_list():
+    c = _day_env()
+    c.post("/api/h/trigger/nightly_review")
+    _say(c, "1", "1", "1")                                              # a finished menu
+    _say(c, "change menu")
+    last = _texts(c)[-1]
+    assert "Breakfast options" in last and "Lunch options" not in last and "Tomorrow's plan" not in last
+    _say(c, "something else")
+    last = _texts(c)[-1]
+    assert "Breakfast options" in last and "Tomorrow's plan" not in last
+    c2 = _day_env()
+    c2.post("/api/mock/controls", json={"out_of_stock": ["cauliflower"]})
+    c2.post("/api/h/trigger/nightly_review")
+    _say(c2, "aloo gobi", "skip", "skip")                               # needs cauliflower, which no shop has
+    texts = " ".join(_texts(c2))
+    assert "Let's choose again" in texts and "Tomorrow's plan" not in texts
