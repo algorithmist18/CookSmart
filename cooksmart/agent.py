@@ -133,11 +133,10 @@ class Agent:
         return bool(plan) and plan["state"] != "closed" and plan["day"] > h["sim_date"]
 
     def _day_text(self, plan: dict, bold: bool = False) -> str:
+        """All three meals, one per line; a skipped meal says so."""
         m = daystory.meals_of(plan)
-        parts = [(daystory.ICON[k], k.title(), _names(m[k])) for k in daystory.MEALS if m[k]]
-        if len(parts) <= 1:
-            return _names(plan["chosen"]) if not bold else f"*{_names(plan['chosen'])}*"
-        return "\n".join(f"{i} {k}: " + (f"*{v}*" if bold else v) for i, k, v in parts)
+        return "\n".join(f"{daystory.ICON[k]} {k.title()}: " + ((f"*{_names(m[k])}*" if bold else _names(m[k])) if m[k] else "skipped")
+                         for k in daystory.MEALS)
 
     def _fmt_stage_props(self, props: list[dict], stage: str, avail: dict, scale: float) -> str:
         lines = []
