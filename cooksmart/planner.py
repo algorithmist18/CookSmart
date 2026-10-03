@@ -302,12 +302,13 @@ def breakfast_options(ctx: PlanContext, taken: list[str], n: int = 3) -> list[Pr
 
 def dinner_options(ctx: PlanContext, taken: list[str], lunch: list[str], n: int = 3) -> list[Proposal]:
     ctx2 = _left_after(ctx, taken)
-    picks, mains = [], set()
+    picks, mains, sets = [], set(), set()
     for max_gaps in (2, 99):
         for _, ids in _dinner_candidates(ctx, set(taken), ctx2.stock, lunch or taken[:1] or ["roti"], max_gaps=max_gaps):
-            if ids[0] in mains:
+            if ids[0] in mains or frozenset(ids) in sets:       # no repeat of a main, and no same dishes in another order
                 continue
             mains.add(ids[0])
+            sets.add(frozenset(ids))
             picks.append(enrich(ids, ctx2))
             if len(picks) == n:
                 break

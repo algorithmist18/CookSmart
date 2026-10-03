@@ -816,7 +816,10 @@ class Agent:
                                                            start=cookmsgs.dish_names(start)))
             elif wait:
                 msg = cookmsgs.concat(msg, cookmsgs.render("brief_prep", lang))
-        return cookmsgs.concat(msg, cookmsgs.render("brief_end", lang))
+        end = cookmsgs.render("brief_end", lang)
+        if by_meal:                                    # the list of meals ends, then the question starts on its own line
+            end = cookmsgs.CookMessage("\n" + end.text.lstrip(), end.lang, end.buttons)
+        return cookmsgs.concat(msg, end)
 
     def morning_handoff(self, hid: str) -> dict | None:
         plan = repo.latest_plan(self.db, hid)

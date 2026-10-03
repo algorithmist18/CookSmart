@@ -687,3 +687,15 @@ def test_reset_keeps_the_household_profile_and_other_households_untouched():
     prefs = c.get("/api/h/owner/state").json()["household"]["preferences"]
     assert any("peanut" in m.get("allergies", []) for m in prefs.get("members", []))
     assert c.get("/api/other/owner/state").status_code == 200
+
+
+def test_dinner_options_never_repeat_the_same_dishes_in_another_order_and_the_brief_question_has_its_own_line():
+    c = _day_env()
+    c.post("/api/h/trigger/nightly_review")
+    _say(c, "1", "aloo gobi")
+    sets = [frozenset(o["recipe_ids"]) for o in _plan(c)["proposals"]]
+    assert len(sets) == len(set(sets))
+    _say(c, "3", "approve")
+    c.post("/api/h/trigger/morning")
+    brief = [m["text"] for m in c.get("/api/h/cook/messages").json()][-1]
+    assert "\nसमझ गए?" in brief and "डिनर:" in brief
