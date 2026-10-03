@@ -31,7 +31,7 @@ def env():
     raw = agent.handle_owner                    # tests use the scenario shorthand: a pick or a named dish settles the whole menu
     e.agent.handle_owner = lambda hid, text: scenarios.say_and_settle(type("A", (), {"handle_owner": staticmethod(raw)}), db, hid, text)
     e.raw_owner = raw
-    e.owner = lambda: [m["text"] for m in repo.list_messages(db, "demo", "owner")]
+    e.owner = lambda: [m["text"] for m in repo.list_messages(db, "demo", "owner") if not (m["payload"] or {}).get("flow")]     # chat, without the pinned day flow
     e.cook = lambda: [m["text"] for m in repo.list_messages(db, "demo", "cook")]
     e.plan = lambda: repo.latest_plan(db, "demo")
     e.orders = lambda: repo.list_orders(db, "demo")

@@ -445,7 +445,11 @@ def _say(c, *texts):
 
 
 def _texts(c):
-    return [m["text"] for m in c.get("/api/h/owner/messages").json()]
+    return [m["text"] for m in c.get("/api/h/owner/messages").json() if not (m.get("payload") or {}).get("flow")]
+
+
+def _flows(c):
+    return [m["text"] for m in c.get("/api/h/owner/messages").json() if (m.get("payload") or {}).get("flow")]
 
 
 def _plan(c):
@@ -604,3 +608,23 @@ def test_breakfast_is_always_asked_even_when_no_option_can_be_made():
     assert p["stage"] == "breakfast" and p["meals"] == {}                # still waiting for the owner, nothing skipped for them
     _say(c, "skip")
     assert _plan(c)["stage"] == "lunch" and "What do you want for lunch?" in _texts(c)[-1]
+
+
+def test_the_day_flow_is_posted_whenever_the_state_changes_and_only_then():
+    c = _day_env()
+    assert _flows(c) == []
+    c.post("/api/h/trigger/nightly_review")
+    assert len(_flows(c)) == 1 and "Today's flow" in _flows(c)[0] and "choosing breakfast" in _flows(c)[0]
+    _say(c, "help")                                                     # nothing changed in the day: no new flow
+    assert len(_flows(c)) == 1
+    _say(c, "1")                                                        # breakfast chosen: the day moved on
+    assert len(_flows(c)) == 2 and "choosing lunch" in _flows(c)[-1] and "Breakfast:" in _flows(c)[-1]
+    _say(c, "1", "1")                                                   # lunch, dinner -> menu set; one flow per action
+    assert len(_flows(c)) == 4 and "✅ 9:10 PM Menu picked" in _flows(c)[-1]
+    n = len(_flows(c))
+    c.post("/api/h/trigger/morning")                                    # the cutoff + brief inside are one action, one flow
+    assert len(_flows(c)) == n + 1 and "✅ 6:30 AM Cook briefed" in _flows(c)[-1]
+    c.post("/api/h/trigger/serve_breakfast")
+    assert len(_flows(c)) == n + 2 and "✅ 8:00 AM Breakfast" in _flows(c)[-1] and "👉" in _flows(c)[-1]
+    # the flow is a pinned panel, never counted as a chat turn
+    assert all((m.get("payload") or {}).get("flow") for m in c.get("/api/h/owner/messages").json() if m["text"].startswith("📅"))

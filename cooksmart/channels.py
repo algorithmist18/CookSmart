@@ -22,7 +22,7 @@ class CookMessage:
 
 
 class MessageChannel(Protocol):
-    def send_owner(self, hid: str, text: str, buttons: list[str] | None = None) -> None: ...
+    def send_owner(self, hid: str, text: str, buttons: list[str] | None = None, flow: bool = False) -> None: ...
     def send_cook(self, hid: str, msg: CookMessage) -> None: ...
 
 
@@ -30,8 +30,9 @@ class MockChannel:
     def __init__(self, db: DB, speech=None):
         self.db, self.speech = db, speech
 
-    def send_owner(self, hid, text, buttons=None):
-        repo.add_message(self.db, hid, "owner", "agent", text, {"buttons": buttons} if buttons else None)
+    def send_owner(self, hid, text, buttons=None, flow=False):
+        payload = {**({"buttons": buttons} if buttons else {}), **({"flow": True} if flow else {})}
+        repo.add_message(self.db, hid, "owner", "agent", text, payload or None)
 
     def send_cook(self, hid, msg):
         """The cook gets a voice note. If a speech service is configured the audio is synthesised (and cached);

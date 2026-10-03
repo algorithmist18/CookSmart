@@ -90,6 +90,7 @@
   .screen .phone { flex:1; height:auto; min-height:0; border:0; border-radius:0; box-shadow:none; background:var(--screen); }
   .screen .phone[hidden] { display:none !important; } .screen .wa-head { display:none; }
   .screen .wa-chat { background-image:none; }
+  .flowpin { flex:none; max-height:34%; overflow:auto; padding:8px 12px; background:var(--in); color:var(--inkb); border-bottom:1px solid var(--line); font-size:12.5px; line-height:1.5; white-space:pre-line; }
   .screen .msg { max-width:94%; font-size:15px; } .screen .qrs { width:min(94%,420px); }
   .screen .sendbtn { width:50px; height:50px; font-size:21px; }
   #gear { position:absolute; right:8px; top:52px; width:min(340px,92%); background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; z-index:9; box-shadow:0 10px 30px #0006; max-height:80%; overflow:auto; color:var(--ink); }
@@ -232,6 +233,7 @@
         </div>
         <div class="phone" id="ph-owner">
           <div class="wa-head"><div class="avatar">🍲</div><div class="who"><b>CookSmart</b><small data-status>online</small></div></div>
+          <div class="flowpin" data-flow hidden></div>
           <div class="wa-chat" data-chat><div class="empty" data-empty>Hi! Tap 🎤 or type.<br>Press <b>Next</b> to run the day.</div></div>
           <div class="chips" data-chips></div>
           <form class="wa-input" data-form><div class="pill"><input data-in placeholder="Ask your fridge" autocomplete="off"></div><button class="sendbtn" data-send type="submit">🎤</button></form>
@@ -473,6 +475,7 @@ class Phone {
     this.chat.scrollTop = this.chat.scrollHeight;
   }
   add(m) {
+    if (m.payload && m.payload.flow) { const f = $('[data-flow]', this.root); if (f) { f.innerHTML = fmt(m.text); f.hidden = false; } return; }     // the day flow stays pinned, it isn't a chat bubble
     const e = $('[data-empty]', this.chat); if (e) e.hidden = true;
     const dir = m.sender === 'agent' ? 'in' : 'out', row = document.createElement('div'); row.className = 'rowm ' + dir;
     const bub = document.createElement('div'); bub.className = 'msg ' + dir + (this.lastDir !== dir ? ' first' : ''); this.lastDir = dir;
@@ -525,7 +528,8 @@ async function pump() {
   if (pumping) return; pumping = true;
   while (queue.length) {
     const { ch, m } = queue.shift(), ph = phones[ch], fast = queue.length > 10 ? 0.25 : queue.length > 5 ? 0.5 : 1;
-    if (m.sender === 'agent') { ph.setTyping(true); await sleep(Math.min(450 + m.text.length * 7, 1900) * fast); ph.setTyping(false); } else await sleep(380 * fast);
+    if (m.payload && m.payload.flow) { /* no typing delay for the pinned flow */ }
+    else if (m.sender === 'agent') { ph.setTyping(true); await sleep(Math.min(450 + m.text.length * 7, 1900) * fast); ph.setTyping(false); } else await sleep(380 * fast);
     ph.add(m);
   }
   pumping = false;
@@ -533,7 +537,7 @@ async function pump() {
 async function pullMessages() {
   const [o, c] = await Promise.all([api(`${HID}/owner/messages?after=${ptr.owner}`), api(`${HID}/cook/messages?after=${ptr.cook}`)]);
   const all = [...o.map(m => ({ ch: 'owner', m })), ...c.map(m => ({ ch: 'cook', m }))].sort((a, b) => a.m.id - b.m.id);
-  const fresh = { owner: false, cook: false }; all.forEach(x => { if (x.m.sender === 'agent') fresh[x.ch] = true; });
+  const fresh = { owner: false, cook: false }; all.forEach(x => { if (x.m.sender === 'agent' && !(x.m.payload && x.m.payload.flow)) fresh[x.ch] = true; });
   Object.keys(fresh).forEach(ch => { if (fresh[ch]) phones[ch].clear(); });                    // a new agent turn replaces the old chat
   for (let i = queue.length - 1; i >= 0; i--) if (fresh[queue[i].ch]) queue.splice(i, 1);
   all.forEach(x => { ptr[x.ch] = Math.max(ptr[x.ch], x.m.id); queue.push(x); }); if (all.length) pump();
@@ -554,7 +558,7 @@ function buildScenarios() {
 function showScenario(id) { selected = scenarios.find(s => s.id === id); $('#scenSel').value = id; $('#scenBlurb').innerHTML = fmt(selected.blurb); $('#scenHint').innerHTML = '💡 ' + fmt(selected.hint); }
 async function loadScenario(play) {
   if (!selected) return; await api(`${HID}/scenario/${selected.id}?play=${play}`, {});
-  Object.values(phones).forEach(p => p.clear()); prevShown = null; queue.length = 0; ptr.owner = ptr.cook = 0; $('#doorRes').textContent = ''; busy = false; await refresh();
+  Object.values(phones).forEach(p => p.clear()); const fp = $('[data-flow]', phones.owner.root); if (fp) fp.hidden = true; prevShown = null; queue.length = 0; ptr.owner = ptr.cook = 0; $('#doorRes').textContent = ''; busy = false; await refresh();
 }
 $('#scenLoad').onclick = () => loadScenario(false); $('#scenPlay').onclick = () => loadScenario(true);
 
