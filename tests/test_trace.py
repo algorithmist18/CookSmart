@@ -115,3 +115,34 @@ def test_redaction_and_a_reset_clears_the_log():
 def test_the_activity_panel_is_closed_by_default_and_does_not_clutter_the_page():
     html = TestClient(create_app(Settings(":memory:", "", "m", "", "t"), DB(":memory:"))).get("/").text
     assert '<aside id="trace" hidden' in html and 'id="traceBtn"' in html
+
+
+def test_the_test_button_round_trips_through_gnani_and_logs_both_calls():
+    import httpx as hx
+    c = TestClient(create_app(Settings(":memory:", "", "m", "K", "t", speech="gnani"), DB(":memory:")))
+    c.post("/api/households", json={"id": "h"})
+
+    def handler(req: hx.Request) -> hx.Response:
+        if "stt" in str(req.url):
+            return hx.Response(200, json={"transcript": "नमस्ते पनीर खत्म हो गया", "confidence": 0.93})
+        return hx.Response(200, content=b"RIFF....audio", headers={"content-type": "audio/wav"})
+    c.app.state.agent.speech.primary.client = hx.Client(transport=hx.MockTransport(handler))
+    r = c.post("/api/h/gnani/test").json()
+    assert r["live"] is True and r["heard"] == "नमस्ते पनीर खत्म हो गया" and r["error"] is None
+    labels = [(x["label"], x["status"]) for x in c.get("/api/h/trace").json() if x["kind"] == "gnani"]
+    assert labels == [("Gnani TTS (text to speech)", "ok"), ("Gnani STT (speech to text)", "ok")]
+    assert "K\"" not in json.dumps(c.get("/api/h/trace").json())
+
+
+def test_the_test_button_reports_a_rejected_key_and_works_offline():
+    import httpx as hx
+    c = TestClient(create_app(Settings(":memory:", "", "m", "BAD", "t", speech="gnani"), DB(":memory:")))
+    c.post("/api/households", json={"id": "h"})
+    c.app.state.agent.speech.primary.client = hx.Client(transport=hx.MockTransport(lambda r: hx.Response(401, json={"message": "invalid key"})))
+    r = c.post("/api/h/gnani/test").json()
+    assert r["live"] and "401" in r["error"]
+    assert any(x["status"] == "error" for x in c.get("/api/h/trace").json())
+    off = client()
+    r = off.post("/api/h/gnani/test").json()
+    assert r["live"] is False and r["error"] is None
+    assert any("mock" in x["label"].lower() for x in off.get("/api/h/trace").json())

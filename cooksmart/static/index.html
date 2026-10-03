@@ -405,7 +405,7 @@
 <aside id="trace" hidden aria-label="Activity">
   <div class="trhead"><b>Activity</b>
     <span class="seg" id="trFilter"><button data-k="all" class="on">All</button><button data-k="input">In</button><button data-k="gnani">Gnani</button><button data-k="message">Out</button></span>
-    <span class="grow"></span><button class="link" id="trClear">Clear</button><button class="link" id="trClose" aria-label="Close">✕</button></div>
+    <span class="grow"></span><button class="link" id="trTest" title="Speak a phrase through Gnani and listen to it again">Test Gnani</button><button class="link" id="trClear">Clear</button><button class="link" id="trClose" aria-label="Close">✕</button></div>
   <div class="trhint">Click a row for the full request and response.</div>
   <div id="trList"></div>
 </aside>
@@ -871,6 +871,12 @@ async function pullTrace() {
 const resetTrace = () => { trAfter = 0; trRows = []; trFresh = 0; trOpenIds.clear(); drawTrace(); };
 $('#traceBtn').onclick = e => { e.stopPropagation(); $('#trace').hidden = !$('#trace').hidden; if (!$('#trace').hidden) { drawTrace(); pullTrace(); } };
 $('#trClose').onclick = () => $('#trace').hidden = true;
+$('#trTest').onclick = async () => {
+  const b = $('#trTest'); b.disabled = true; b.textContent = 'Testing…';
+  try { const r = await api(HID + '/gnani/test', {}); await pullTrace();
+    toast(r.error ? 'Gnani: ' + r.error : r.live ? `Gnani heard: “${r.heard || '(nothing)'}”` : 'No Gnani key found: nothing was sent (the rows show what would be)', !!r.error); }
+  finally { b.disabled = false; b.textContent = 'Test Gnani'; }
+};
 $('#trClear').onclick = () => { trRows = []; trOpenIds.clear(); drawTrace(); };
 $$('#trFilter button').forEach(b => b.onclick = () => { trKind = b.dataset.k; $$('#trFilter button').forEach(x => x.classList.toggle('on', x === b)); drawTrace(); });
 

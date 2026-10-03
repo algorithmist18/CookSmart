@@ -561,6 +561,26 @@ def create_app(settings: Settings | None = None, db: DB | None = None, platform:
         current.pop(hid, None)
         return {"ok": True}
 
+    @app.post("/api/{hid}/gnani/test")
+    def gnani_test(hid: str):
+        """One round trip so the Activity panel shows real requests and responses without recording anything:
+        text -> Gnani TTS -> the returned audio -> Gnani STT. Without a key it records what would have been sent."""
+        need(hid)
+        trace.bind(hid)
+        trace.record("input", "Button: test Gnani voice")
+        sp = getattr(agent.speech, "primary", agent.speech)          # the real provider, so errors show instead of falling back
+        said = "नमस्ते, पनीर खत्म हो गया"
+        out = {"live": bool(agent.speech.describe().get("live")), "said": said, "heard": None, "error": None}
+        try:
+            note = sp.synthesize(said, "hi-IN")
+            if note:
+                out["heard"] = sp.transcribe_audio(note.audio, note.mime, "hi-IN").text
+            else:
+                out["error"] = None if not out["live"] else "Gnani returned no audio"
+        except Exception as e:
+            out["error"] = str(e)[:300]
+        return out
+
     @app.get("/api/{hid}/trace")
     def trace_list(hid: str, after: int = 0):
         need(hid)
