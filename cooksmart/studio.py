@@ -78,7 +78,7 @@ def current_prompt(db: DB, hid: str) -> tuple[str, bool]:
 
 def current_docs(db: DB, hid: str, prefs: dict, family: int) -> list[dict]:
     out = []
-    for name, default in gnani_kb.build_docs(prefs, family).items():
+    for name, default in gnani_kb.build_all_docs(prefs, family).items():
         o = override(db, hid, "doc", name)
         out.append({"name": name, "content": o if o is not None else default, "default": default,
                     "overridden": o is not None, "custom": False})
@@ -94,7 +94,7 @@ def current_docs(db: DB, hid: str, prefs: dict, family: int) -> list[dict]:
 
 
 def current_faqs(db: DB, hid: str, prefs: dict) -> tuple[list[dict], list[dict], bool]:
-    default = gnani_kb.build_faqs(prefs)
+    default = gnani_kb.build_all_faqs(prefs)
     o = override(db, hid, "faqs", "faqs")
     return (json.loads(o), default, True) if o is not None else (default, default, False)
 

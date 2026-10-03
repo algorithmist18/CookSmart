@@ -425,7 +425,7 @@ def create_app(settings: Settings | None = None, db: DB | None = None, platform:
     @app.put("/api/{hid}/studio/docs/{name}")
     def studio_doc_save(hid: str, name: str, body: DocBody):
         h = need(hid)
-        defaults = gnani_kb.build_docs(h["preferences"], h["family_size"])
+        defaults = gnani_kb.build_all_docs(h["preferences"], h["family_size"])
         if name not in defaults and not studio.CUSTOM_RE.match(name):
             raise HTTPException(404, "unknown document")
         checks = studio.check_doc(name, body.content)

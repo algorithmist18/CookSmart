@@ -26,6 +26,31 @@
   },
   {
     "questions": [
+      "Can I give आरव peanuts?",
+      "Can I put peanuts in आरव's food?",
+      "Is peanuts okay in आरव's tiffin?",
+      "What if I add just a little peanuts?"
+    ],
+    "answer": "No. आरव is allergic to peanuts. None at all, not even a little, not in the tadka or garnish."
+  },
+  {
+    "questions": [
+      "I can smell gas",
+      "Gas is leaking",
+      "The cylinder smells"
+    ],
+    "answer": "Turn off the regulator, open the windows and doors, do not touch any switch or light a match, step outside and call Madam/Sir and 1906."
+  },
+  {
+    "questions": [
+      "Someone is having an allergic reaction",
+      "The child's face is swelling",
+      "Trouble breathing after eating"
+    ],
+    "answer": "Stop feeding, call Madam/Sir at once and call 112. Do not leave the person alone."
+  },
+  {
+    "questions": [
       "सब्ज़ी से स्मेल आ रही है, यूज़ कर लूँ?",
       "चिपचिपी हो गई है, पका लूँ?",
       "फफूंद लगी है, काटकर यूज़ करूँ?"
@@ -238,5 +263,220 @@
       "सेब का क्या करूँ, जल्दी ख़राब होगा"
     ],
     "answer": "सॉफ्ट धब्बे काटकर निकाल दें. सबसे अच्छा: कड़क सेब चाट में. बदबू या चिपचिपापन हो तो फेंक दें."
+  },
+  {
+    "questions": [
+      "The sabzi smells, can I use it?",
+      "It has gone slimy, can I cook it?",
+      "There is mould, can I cut it off and use it?"
+    ],
+    "answer": "No. If it smells, is slimy or mouldy, do not cook it. Throw it away and tell Madam/Sir."
+  },
+  {
+    "questions": [
+      "How big is one katori?",
+      "How many ml is a katori?"
+    ],
+    "answer": "This household's katori is about 150 ml."
+  },
+  {
+    "questions": [
+      "How much masala should I add?",
+      "What taste does the house like?",
+      "How much oil and salt?"
+    ],
+    "answer": "Spice: medium; Oil: low; Sugar: low."
+  },
+  {
+    "questions": [
+      "The tomato is getting old, what should I do?",
+      "The tomato is over-ripe",
+      "What can I do with the tomato, it will spoil soon?"
+    ],
+    "answer": "Puree over-ripe tomatoes and add to dal or gravy. Best use: Very ripe tomatoes are sweet and juicy, best in dal, gravy and chutney; use firm ones for salad. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The onion is getting old, what should I do?",
+      "The onion is over-ripe",
+      "What can I do with the onion, it will spoil soon?"
+    ],
+    "answer": "A little sprouting is fine if the onion is firm and does not smell. Best use: Well-cooked onion adds sweetness to gravy. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The potato is getting old, what should I do?",
+      "The potato is over-ripe",
+      "What can I do with the potato, it will spoil soon?"
+    ],
+    "answer": "Do not eat green parts or heavily sprouted potatoes (can be harmful); cut light sprouts out completely. Best use: Older potatoes suit paratha and stuffing; new potatoes suit jeera aloo. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The spinach is getting old, what should I do?",
+      "The spinach is over-ripe",
+      "What can I do with the spinach, it will spoil soon?"
+    ],
+    "answer": "If wilted but not slimy, blanch and cook it today. Best use: Fresh spinach is greenest and sweetest; if wilted, blanch and do not overcook. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The paneer is getting old, what should I do?",
+      "The paneer is over-ripe",
+      "What can I do with the paneer, it will spoil soon?"
+    ],
+    "answer": "Paneer that has firmed up: soak in warm water for 10 minutes to soften; use in bhurji or gravy. Best use: Older paneer is better in bhurji or gravy than fried; add paneer last so it stays soft. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The cauliflower is getting old, what should I do?",
+      "The cauliflower is over-ripe",
+      "What can I do with the cauliflower, it will spoil soon?"
+    ],
+    "answer": "Cut off small dark spots; stalks and soft leaves can go in the sabzi too. Best use: Fresh gobhi is crisp when roasted; slightly older is good in gravy or paratha stuffing. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The peas is getting old, what should I do?",
+      "The peas is over-ripe",
+      "What can I do with the peas, it will spoil soon?"
+    ],
+    "answer": "If you have a lot, boil and freeze. Best use: Fresh peas are sweet; do not overcook. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The curd is getting old, what should I do?",
+      "The curd is over-ripe",
+      "What can I do with the curd, it will spoil soon?"
+    ],
+    "answer": "If sour but not mouldy, use in kadhi, marinades or paratha dough. Best use: Sour curd is best for kadhi; fresh curd for raita and curd rice. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The cream is getting old, what should I do?",
+      "The cream is over-ripe",
+      "What can I do with the cream, it will spoil soon?"
+    ],
+    "answer": "Use a small amount in palak or paneer gravy. Best use: Add at the end, do not boil. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The cucumber is getting old, what should I do?",
+      "The cucumber is over-ripe",
+      "What can I do with the cucumber, it will spoil soon?"
+    ],
+    "answer": "If soft, remove the seeds and use in raita. Best use: Firm cucumber in salad; soft in raita. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The milk is getting old, what should I do?",
+      "The milk is over-ripe",
+      "What can I do with the milk, it will spoil soon?"
+    ],
+    "answer": "Split milk can make home-made paneer, but throw it away if it smells. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The egg is getting old, what should I do?",
+      "The egg is over-ripe",
+      "What can I do with the egg, it will spoil soon?"
+    ],
+    "answer": "Cook old eggs thoroughly. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The chicken is getting old, what should I do?",
+      "The chicken is over-ripe",
+      "What can I do with the chicken, it will spoil soon?"
+    ],
+    "answer": "Do not use after the pack expiry date. Throw it away. Wash utensils and board used for raw chicken separately and cook it thoroughly. Best use: Fresh chicken cooks quickly; do not overcook. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The bhindi is getting old, what should I do?",
+      "The bhindi is over-ripe",
+      "What can I do with the bhindi, it will spoil soon?"
+    ],
+    "answer": "If it has gone soft, cook it today. Best use: Wash, dry completely and then cut: less sticky. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The brinjal is getting old, what should I do?",
+      "The brinjal is over-ripe",
+      "What can I do with the brinjal, it will spoil soon?"
+    ],
+    "answer": "Cut off small spots. Best use: Roast for bharta; fresh brinjal has fewer seeds. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The cabbage is getting old, what should I do?",
+      "The cabbage is over-ripe",
+      "What can I do with the cabbage, it will spoil soon?"
+    ],
+    "answer": "Remove spoiled outer leaves. Best use: Cook lightly to keep some crunch. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The carrot is getting old, what should I do?",
+      "The carrot is over-ripe",
+      "What can I do with the carrot, it will spoil soon?"
+    ],
+    "answer": "If rubbery, soak in cold water for 30 minutes to crisp up. Best use: Sweet; goes well with peas. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The beans is getting old, what should I do?",
+      "The beans is over-ripe",
+      "What can I do with the beans, it will spoil soon?"
+    ],
+    "answer": "Remove strings from older beans. Best use: Do not overcook. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The capsicum is getting old, what should I do?",
+      "The capsicum is over-ripe",
+      "What can I do with the capsicum, it will spoil soon?"
+    ],
+    "answer": "If wrinkled, cook today. Best use: Add last to keep it crisp. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The lauki is getting old, what should I do?",
+      "The lauki is over-ripe",
+      "What can I do with the lauki, it will spoil soon?"
+    ],
+    "answer": "Taste a small piece first. If bitter, throw the whole thing away and do not cook it (bitter lauki can be harmful). Best use: A light sabzi; good with tomato. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The mushroom is getting old, what should I do?",
+      "The mushroom is over-ripe",
+      "What can I do with the mushroom, it will spoil soon?"
+    ],
+    "answer": "Cook quickly; do not eat slimy mushrooms. Best use: Fry fast on high heat. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The bread is getting old, what should I do?",
+      "The bread is over-ripe",
+      "What can I do with the bread, it will spoil soon?"
+    ],
+    "answer": "Day-old bread (no mould) makes toast, upma or bread pakora. Best use: Day-old bread is crisp when toasted. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The banana is getting old, what should I do?",
+      "The banana is over-ripe",
+      "What can I do with the banana, it will spoil soon?"
+    ],
+    "answer": "Very ripe bananas: paratha, shake or halwa. Best use: Ripe bananas are sweet and best in sweet dishes. If it smells or is slimy, throw it away."
+  },
+  {
+    "questions": [
+      "The apple is getting old, what should I do?",
+      "The apple is over-ripe",
+      "What can I do with the apple, it will spoil soon?"
+    ],
+    "answer": "Cut out soft spots. Best use: Firm apple in chaat. If it smells or is slimy, throw it away."
   }
 ]

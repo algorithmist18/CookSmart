@@ -446,3 +446,28 @@ def test_new_scenarios_end_in_the_story_they_promise(env, sid):
         assert env.cook() and "दाल तड़का" in env.cook()[-1]
     if sid == "call_unconfirmed":
         assert "Not applied" in owner and inv.get(env.db, env.hid, "dal")["qty"] == 500
+
+
+def test_english_edition_mirrors_every_hindi_document_and_stays_cook_safe():
+    hi, en_ = gnani_kb.build_docs(DEMO, 4), gnani_kb.build_docs_en(DEMO, 4)
+    assert len(en_) == len(hi) == 9 and all(n.startswith("en_") for n in en_) and all(t.startswith("# ") for t in en_.values())
+    assert [n[3:5] for n in en_] == [n[:2] for n in hi]                       # same nine topics, same order
+    blob = "".join(en_.values()).lower()
+    for w in ("diabet", "high_bp", "gas_acidity", "cholesterol", "₹", "otp"):
+        assert w not in blob, w
+    allergy = en_["en_02_allergy_and_safety.md"]
+    assert "आरव" in allergy and "Peanuts" in allergy and "112" in allergy
+    assert "Spice: mild" in en_["en_01_household_profile.md"]
+    assert "आरव" not in gnani_kb.build_docs_en({"members": [{"name": "Meera", "allergies": ["egg"]}]}, 3)["en_02_allergy_and_safety.md"]
+    assert "No allergies registered" in gnani_kb.build_docs_en({}, 2)["en_02_allergy_and_safety.md"]
+    mild = en_["en_01_household_profile.md"].count("ild spice")
+    assert mild <= 3                                                          # a clause is said once per person, whatever its case
+
+
+def test_english_faqs_are_in_the_set_safety_first_within_the_limit():
+    faqs = gnani_kb.build_all_faqs(DEMO)
+    assert len(faqs) <= 100
+    qs = " ".join(q for f in faqs for q in f["questions"])
+    assert "Can I give आरव peanuts?" in qs and "I can smell gas" in qs and "गैस की स्मेल आ रही है" in qs
+    assert all(1 <= len(f["questions"]) <= 10 and f["answer"] for f in faqs)
+    assert any("allerg" in f["answer"].lower() or "एलर्जी" in f["answer"] for f in faqs[:6])

@@ -32,7 +32,7 @@ def detail(r):
 def test_studio_starts_on_defaults():
     st = client().get("/api/h/studio").json()
     assert st["prompt"]["current"] == PROMPT and not st["prompt"]["overridden"] and st["prompt"]["checks"]["errors"] == []
-    assert len(st["docs"]) == 9 and not any(d["overridden"] for d in st["docs"])
+    assert len(st["docs"]) == 18 and not any(d["overridden"] for d in st["docs"])
     assert st["faqs"]["items"] and not st["faqs"]["overridden"]
     assert {v["name"] for v in st["prompt"]["variables"]} >= {"cautions_hi", "use_first_hi", "dishes_hi"}
     assert "peanut" in st["options"]["allergens"] and st["push"]["available"] is False
@@ -118,7 +118,7 @@ def test_custom_documents_can_be_added_and_removed():
     assert c.post("/api/h/studio/docs", json={"name": "Bad Name.txt", "content": "x"}).status_code == 422
     assert c.post("/api/h/studio/docs", json={"name": "custom_festivals.md", "content": "# त्योहार\n\nदिवाली पर पूरन पोली"}).json()["saved"]
     docs = {d["name"]: d for d in c.get("/api/h/studio").json()["docs"]}
-    assert docs["custom_festivals.md"]["custom"] and len(docs) == 10
+    assert docs["custom_festivals.md"]["custom"] and len(docs) == 19
     assert "त्योहार" in c.get("/api/h/gnani/kb").json()["files"]["custom_festivals.md"]
     c.delete("/api/h/studio/docs/custom_festivals.md")
     assert "custom_festivals.md" not in {d["name"] for d in c.get("/api/h/studio").json()["docs"]}

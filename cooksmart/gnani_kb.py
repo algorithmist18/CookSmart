@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 
 from . import knowledge as kn
+from . import knowledge_en as en
 from . import profile as prof
 from .recipes import ALLERGENS, ITEMS, RECIPES
 
@@ -244,15 +245,248 @@ def build_faqs(prefs: dict, limit: int = 100) -> list[dict]:
     return faqs[:limit]
 
 
+# ================================================================== English edition
+# The same nine documents in English (names start with en_). Free text the owner typed (notes, customs, house
+# specials) is kept exactly as written, in whichever language it was entered.
+def _ename(item: str) -> str:
+    return en.item_name(item)
+
+
+def _members_en(prefs: dict) -> list[tuple[dict, list[str]]]:
+    out = []
+    for m in prof.members(prefs):
+        ins = []
+        for g in m.get("allergies", []):
+            ins.append(f"No {en.ALLERGEN_EN[g]} at all (allergy), not even a little")
+        ins += [f"No {_ename(i)}" for i in m.get("avoid", []) if i in ITEMS]
+        ins += [en.HEALTH_EN[h] for h in m.get("health", []) if h in en.HEALTH_EN]
+        if m.get("spice") in en.SPICE_EN:
+            ins.append(f"Spice: {en.SPICE_EN[m['spice']]}")
+        ins += list(m.get("notes", []))
+        clauses = [c.strip() for line in ins for c in line.split(";") if c.strip()]
+        out.append((m, list({c.lower(): c for c in reversed(clauses)}.values())[::-1]))      # each clause once, whatever its case
+    return out
+
+
+def _style_en(prefs: dict) -> list[str]:
+    st, out = prefs.get("style", {}), []
+    if st.get("spice") in en.SPICE_EN:
+        out.append(f"Spice: {en.SPICE_EN[st['spice']]}")
+    for key, label in (("oil", "Oil"), ("salt", "Salt"), ("sugar", "Sugar")):
+        if st.get(key) in en.LEVEL_EN and st[key] != "normal":
+            out.append(f"{label}: {en.LEVEL_EN[st[key]]}")
+    return out
+
+
+def doc_household_en(prefs: dict, family: int) -> str:
+    people = [f"{m['name']} ({en.AGE_EN.get(m.get('age_group', 'adult'), 'adult')})" for m in prof.members(prefs)]
+    ins = [f"{m['name']}: " + "; ".join(i) for m, i in _members_en(prefs) if i]
+    times = [f"{k}: {v}" for k, v in prefs.get("meal_times", {}).items()]
+    customs = [c if isinstance(c, str) else c.get("text", "") for c in prefs.get("customs", [])]
+    return _md(
+        "Household profile",
+        ("Who eats", [f"About {family} people eat every day. If there are guests, each call says how many are eating today."]
+         + (["People in the house: " + ", ".join(people)] if people else [])),
+        ("Instructions for each person", ins or ["No special instructions"]),
+        ("Meal times", times or ["Not fixed"]),
+        ("House rules and customs", [c for c in customs if c] or ["No special rules"]),
+        ("Important", "These are instructions only. Never discuss anyone's illness or personal details. If she wants to know more, ask her to check with Madam/Sir."),
+    )
+
+
+def doc_allergy_en(prefs: dict) -> str:
+    per = []
+    for g in sorted(prof.allergy_groups(prefs)):
+        who = ", ".join(prof.who_is_allergic(prefs, g))
+        per.append(f"**{en.ALLERGEN_EN[g].capitalize()}**: {who}. Absolutely none: not less, not more, not in the tadka, garnish or chutney.")
+    hidden = [
+        "Besan is chickpea; chole is chickpea",
+        "Bread contains wheat, and often milk or egg too",
+        "Paneer, curd, cream, butter and ghee all come from milk",
+        "Packaged masalas, namkeen, chutneys and sauces can contain traces of peanut or milk. Read the label, and if unsure do not use it",
+        "Poha, upma and chaat often get peanuts on top. None in the portion of anyone with an allergy",
+    ]
+    return _md(
+        "Allergies and safety (the most important document)",
+        ("Priority", "The cautions given at the start of every call outrank this document. If in doubt, do not use the ingredient and ask Madam/Sir."),
+        ("Who is allergic to what", per or ["No allergies registered right now"]),
+        ("Hidden sources", hidden),
+        ("How to prevent it", ["Cook the allergic person's food first, in separate utensils", "Separate spoon and ladle; wash well before use",
+                               "The same rules apply for guests"]),
+        ("If someone seems to have an allergic reaction (swollen lips or face, trouble breathing, rash, vomiting)",
+         ["Stop feeding at once", "Call Madam/Sir immediately and call 112; do not wait if breathing is difficult",
+          "Do not leave the person alone", "This is not a substitute for a doctor's advice"]),
+    )
+
+
+def doc_taste_en(prefs: dict) -> str:
+    sig = [f"{RECIPES[r]['name']}: {t}" for r, t in prefs.get("signature", {}).items() if r in RECIPES]
+    likes = [_ename(i) for i in prefs.get("likes", []) if i in ITEMS]
+    dislikes = [_ename(i) for i in prefs.get("dislikes", []) if i in ITEMS]
+    persons = [f"{m['name']}: " + "; ".join(x for x in i if "allerg" not in x.lower()) for m, i in _members_en(prefs)
+               if any("allerg" not in x.lower() for x in i)]
+    return _md(
+        "This household's taste and personalisation",
+        ("General preferences", _style_en(prefs) or ["Ordinary"]),
+        ("Each person's preferences", persons or ["Nothing special"]),
+        ("This household's special ways", sig or ["Nothing special"]),
+        ("Favourites", [", ".join(likes)] if likes else ["Not registered"]),
+        ("Dislikes", [", ".join(dislikes)] if dislikes else ["Not registered"]),
+        ("Note", "If a tip here and the household's preference differ, follow the household's preference."),
+    )
+
+
+def doc_care_en() -> str:
+    lines = []
+    for item, c in en.ITEM_CARE_EN.items():
+        if not c["lasts"] or c["lasts"] == "Several months":
+            continue
+        row = f"**{_ename(item).capitalize()}**: Storage: {c['store']}. Lasts: {c['lasts']}. Signs it has gone off: {c['spoil']}."
+        if c["use_up"]:
+            row += f" If old: {c['use_up']}."
+        lines.append(row)
+    dry = [_ename(i) for i, c in en.ITEM_CARE_EN.items() if c["lasts"] == "Several months" or c["lasts"].startswith("2-3 months")]
+    return _md(
+        "Ingredient care and using things up",
+        ("Safety rule", "If it smells bad, is slimy, mouldy or tastes bitter, do not cook it. Throw it away and tell Madam/Sir. When in doubt, do not use it."),
+        ("Fresh items", lines),
+        ("Dry items", ["In airtight containers in a dry place. If there are insects, webbing, damp or a smell, throw away that part: " + ", ".join(dry)]),
+        ("Remember", "What will spoil first today is told at the start of every call. This document only says how to handle each item."),
+    )
+
+
+def doc_taste_guide_en() -> str:
+    lines = [f"**{_ename(i).capitalize()}**: {c['taste']}" for i, c in en.ITEM_CARE_EN.items() if c["taste"]]
+    tips = [f"{RECIPES[r]['name']}: {t}" for r, t in en.DISH_TIPS_EN.items() if r in RECIPES]
+    return _md("Taste guide", ("By the condition of the item", lines), ("For some dishes", tips),
+               ("Note", "These are tips, not rules. Her experience and the household's taste come first."))
+
+
+def doc_health_en(prefs: dict) -> str:
+    items = [f"**{_ename(i).capitalize()}**: {c['health']}" for i, c in en.ITEM_CARE_EN.items() if c["health"]]
+    house = [f"{m['name']}: " + "; ".join(i) for m, i in _members_en(prefs) if m.get("health") or m.get("notes")]
+    return _md(
+        "Health notes",
+        ("What this is", "General nutrition information, not medical advice. Whatever a doctor has told someone comes first."),
+        ("A balanced thali", ["Dal or protein + sabzi + roti/rice + curd or salad", "Do not serve only one type of food (for example only rice and potato)",
+                              "Measure oil, ghee, salt and sugar"]),
+        ("Instructions for the family", house or ["No special instructions"]),
+        ("What each item does for health", items),
+        ("Children and elders", ["For children: mild spice, small pieces, well cooked", "For elders: soft, light and fresh food"]),
+    )
+
+
+def doc_kitchen_en(prefs: dict) -> str:
+    k = prefs.get("kitchen", {})
+    setup = []
+    if k.get("burners"):
+        setup.append(f"Burners: {k['burners']}")
+    if k.get("cooker_litres"):
+        setup.append(f"Pressure cooker: {k['cooker_litres']} litres")
+    setup += k.get("notes", [])
+    return _md(
+        "Kitchen and emergencies",
+        ("Kitchen setup", setup or ["Not registered"]),
+        ("If you smell gas", ["Turn off the regulator", "Open the windows and doors", "Do not switch on or press any electrical switch, and do not light a match or lighter",
+                              "Step outside and call Madam/Sir; LPG emergency number 1906 (verify before use)"]),
+        ("If there is a fire", ["Cover a small fire with a lid or a thick wet cloth; never use water on an oil fire", "If it is large, get out and call 101"]),
+        ("Burns or cuts", ["Hold a burn under cool running water for 10 minutes; do not apply butter or toothpaste", "For a deep cut or a bad burn, tell Madam/Sir and call 112/102"]),
+        ("If an appliance breaks", "Say so. On the call, 'cook_problem' changes today's menu to suit."),
+    )
+
+
+def doc_rules_en() -> str:
+    table = ["| What she says | What it means | What you do |", "|---|---|---|"]
+    table += [f"| {a} | {b} | {c} |" for a, b, c in en.PHRASEBOOK_EN]
+    return _md(
+        "Conversation rules and phrasebook",
+        ("What you can talk about", ["Today's menu for breakfast, lunch and dinner, how many people, what to use first, cautions, taste tips"]),
+        ("What you never talk about", ["Money, price, payment, orders, shops, delivery time", "Quantities of items outside the menu",
+                                       "Anyone's illness or personal information", "Changes or promises on your own: say 'I will check with Madam/Sir and tell you'"]),
+        ("Tone", ["Respectful, using 'aap', in short sentences", "One thing at a time; wait for the answer"]),
+        ("If you cannot hear clearly", "Ask her to repeat once; if it is still unclear, offer to send a message. Never record anything on a guess."),
+        ("Example sentences", table),
+    )
+
+
+def doc_units_en(prefs: dict) -> str:
+    u = {**kn.DEFAULT_UNITS, **prefs.get("units", {})}
+    return _md(
+        "Units",
+        ("The household katori", [f"1 katori = about {u['katori_ml']} ml (this household's katori)", f"1 glass = about {u['glass_ml']} ml",
+                                 f"Teaspoon = {u['chammach_ml']} ml; tablespoon = {u['badi_chammach_ml']} ml"]),
+        ("Rough guide", ["Roti: usually 2-3 per adult, 1-2 per child", "If unsure, use the quantities given on the call"]),
+        ("When she gives a quantity", "If she says it in katori, convert to ml using the measure above, repeat it back and ask 'Is that right?'"),
+    )
+
+
+def build_docs_en(prefs: dict, family: int = 4) -> dict[str, str]:
+    return {
+        "en_01_household_profile.md": doc_household_en(prefs, family),
+        "en_02_allergy_and_safety.md": doc_allergy_en(prefs),
+        "en_03_taste_and_preferences.md": doc_taste_en(prefs),
+        "en_04_ingredient_care.md": doc_care_en(),
+        "en_05_taste_guide.md": doc_taste_guide_en(),
+        "en_06_health.md": doc_health_en(prefs),
+        "en_07_kitchen_and_emergencies.md": doc_kitchen_en(prefs),
+        "en_08_conversation_rules.md": doc_rules_en(),
+        "en_09_units.md": doc_units_en(prefs),
+    }
+
+
+def build_faqs_en(prefs: dict, limit: int = 100) -> list[dict]:
+    faqs: list[dict] = []
+    for m in prof.members(prefs):
+        for g in m.get("allergies", []):
+            a = en.ALLERGEN_EN[g]
+            faqs.append({"questions": [f"Can I give {m['name']} {a}?", f"Can I put {a} in {m['name']}'s food?",
+                                       f"Is {a} okay in {m['name']}'s tiffin?", f"What if I add just a little {a}?"],
+                         "answer": f"No. {m['name']} is allergic to {a}. None at all, not even a little, not in the tadka or garnish."})
+    faqs.append({"questions": ["I can smell gas", "Gas is leaking", "The cylinder smells"],
+                 "answer": "Turn off the regulator, open the windows and doors, do not touch any switch or light a match, step outside and call Madam/Sir and 1906."})
+    faqs.append({"questions": ["Someone is having an allergic reaction", "The child's face is swelling", "Trouble breathing after eating"],
+                 "answer": "Stop feeding, call Madam/Sir at once and call 112. Do not leave the person alone."})
+    faqs.append({"questions": ["The sabzi smells, can I use it?", "It has gone slimy, can I cook it?", "There is mould, can I cut it off and use it?"],
+                 "answer": "No. If it smells, is slimy or mouldy, do not cook it. Throw it away and tell Madam/Sir."})
+    u = {**kn.DEFAULT_UNITS, **prefs.get("units", {})}
+    faqs.append({"questions": ["How big is one katori?", "How many ml is a katori?"],
+                 "answer": f"This household's katori is about {u['katori_ml']} ml."})
+    st = _style_en(prefs)
+    if st:
+        faqs.append({"questions": ["How much masala should I add?", "What taste does the house like?", "How much oil and salt?"], "answer": "; ".join(st) + "."})
+    for item, c in en.ITEM_CARE_EN.items():
+        if len(faqs) >= limit:
+            break
+        if c["use_up"]:
+            n = _ename(item)
+            ans = c["use_up"] + (f". Best use: {c['taste']}" if c["taste"] else "")
+            faqs.append({"questions": [f"The {n} is getting old, what should I do?", f"The {n} is over-ripe", f"What can I do with the {n}, it will spoil soon?"],
+                         "answer": ans + ". If it smells or is slimy, throw it away."})
+    return faqs[:limit]
+
+
+def build_all_docs(prefs: dict, family: int = 4) -> dict[str, str]:
+    """Hindi documents first, then their English editions."""
+    return {**build_docs(prefs, family), **build_docs_en(prefs, family)}
+
+
+def build_all_faqs(prefs: dict, limit: int = 100) -> list[dict]:
+    """Gnani allows 100: safety first in both languages, then the rest."""
+    hi, en_ = build_faqs(prefs, limit), build_faqs_en(prefs, limit)
+    safety = lambda f: any(k in f["answer"] for k in ("112", "1906", "allerg", "एलर्जी"))     # noqa: E731
+    ordered = [f for f in hi + en_ if safety(f)] + [f for f in hi + en_ if not safety(f)]
+    return ordered[:limit]
+
+
 def write(out_dir, prefs: dict, family: int = 4, docs: dict | None = None, faqs: list | None = None) -> list[str]:
     """Write the knowledge base. `docs`/`faqs` carry the owner's Studio edits; without them, the generated defaults."""
     from pathlib import Path
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     names = []
-    for name, text in (docs if docs is not None else build_docs(prefs, family)).items():
+    for name, text in (docs if docs is not None else build_all_docs(prefs, family)).items():
         (out / name).write_text(text, encoding="utf-8")
         names.append(name)
-    (out / "faqs.json").write_text(json.dumps(faqs if faqs is not None else build_faqs(prefs), ensure_ascii=False, indent=2),
+    (out / "faqs.json").write_text(json.dumps(faqs if faqs is not None else build_all_faqs(prefs), ensure_ascii=False, indent=2),
                                    encoding="utf-8")
     return names + ["faqs.json"]

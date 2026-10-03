@@ -13,7 +13,7 @@ flow runs locally with no accounts. Real providers can be swapped in later witho
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python -m cooksmart            # open http://127.0.0.1:8000
-python -m pytest               # 295 tests, fully offline
+python -m pytest               # 297 tests, fully offline
 ```
 
 Optional: `cp .env.example .env` and add `ANTHROPIC_API_KEY` so Claude plans menus and parses the cook's
@@ -31,6 +31,8 @@ messages. Without a key, a built-in heuristic planner and a rule-based Hindi/Hin
 Meals: items used by breakfast, lunch and dinner are subtracted on the fridge as each is served; the real stock is
 reconciled once at the wrap-up from what the cook reports. The knowledge base is written in Devanagari with everyday
 English words (फ्रिज, एक्सपायरी, स्टोरेज, कॉशन) so a cook hears the language she uses.
+Every document also has an English edition (`en_01_…` to `en_09_…`) and the FAQs carry English questions and answers, so
+the agent, the owner or a new cook can work in either language. Free text you type (notes, customs) is kept as written.
 
 **Agent Studio** keeps every edit as a version you can restore, and checks before saving: a prompt that wouldn't render
 (or uses a variable CookSmart doesn't send) is refused, and removing today's allergy cautions needs an explicit
