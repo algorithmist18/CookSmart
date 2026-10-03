@@ -21,6 +21,8 @@ import json
 
 import httpx
 
+from .. import trace
+
 from ..recipes import ITEMS
 from .speech import SpeechError, Transcript, VoiceNote
 
@@ -105,11 +107,16 @@ class GnaniSpeechProvider:
             raise SpeechError("audio is longer than the REST limit; ask for a shorter voice note")
         data = {"language_code": lang, "format": "transcribe", "itn_native_numerals": "true",
                 "bias_list": json.dumps(self.bias, ensure_ascii=False), "bias_score": "1"}
-        try:
-            r = self.client.post(self.stt_url, headers={"X-API-Key-ID": self.api_key}, data=data,
-                                 files={"audio_file": ("voice.wav", audio, mime or "audio/wav")})
-        except httpx.HTTPError as e:
-            raise SpeechError(f"could not reach Gnani STT: {e}") from e
+        req = {"url": self.stt_url, "form": {**data, "bias_list": f"{len(self.bias)} kitchen words"}, "audio_file": audio}
+        with trace.timed() as t:
+            try:
+                r = self.client.post(self.stt_url, headers={"X-API-Key-ID": self.api_key}, data=data,
+                                     files={"audio_file": ("voice.wav", audio, mime or "audio/wav")})
+            except httpx.HTTPError as e:
+                trace.record("gnani", "Gnani STT (speech to text)", req, {"error": str(e)}, "error", t.ms)
+                raise SpeechError(f"could not reach Gnani STT: {e}") from e
+        trace.record("gnani", "Gnani STT (speech to text)", req, {"status": r.status_code, "body": (r.text or "")[:600]},
+                     "ok" if r.status_code < 400 else "error", t.ms)
         if r.status_code in (401, 403):
             raise SpeechError(f"Gnani rejected the API key (HTTP {r.status_code})")
         if r.status_code >= 400:
@@ -134,10 +141,16 @@ class GnaniSpeechProvider:
         body = {"text": text, "voice": self.voice, "model": self.model, "language": lang, "speed": 1,
                 "audio_config": {"encoding": "linear_pcm", "container": "wav", "num_channels": 1,
                                  "sample_rate": self.sample_rate, "sample_width": 2}}
-        try:
-            r = self.client.post(self.tts_url, headers={"X-API-Key-ID": self.api_key}, json=body)
-        except httpx.HTTPError as e:
-            raise SpeechError(f"could not reach Gnani TTS: {e}") from e
+        with trace.timed() as t:
+            try:
+                r = self.client.post(self.tts_url, headers={"X-API-Key-ID": self.api_key}, json=body)
+            except httpx.HTTPError as e:
+                trace.record("gnani", "Gnani TTS (text to speech)", {"url": self.tts_url, "body": body}, {"error": str(e)}, "error", t.ms)
+                raise SpeechError(f"could not reach Gnani TTS: {e}") from e
+        trace.record("gnani", "Gnani TTS (text to speech)", {"url": self.tts_url, "body": body},
+                     {"status": r.status_code, "content_type": r.headers.get("content-type", ""),
+                      "body": f"<{len(r.content)} bytes of audio>" if r.content[:4] == b"RIFF" or r.headers.get("content-type", "").startswith("audio/") else (r.text or "")[:300]},
+                     "ok" if r.status_code < 400 else "error", t.ms)
         if r.status_code >= 400:
             raise SpeechError(f"Gnani TTS HTTP {r.status_code}: {r.text[:200]}")
         ctype = r.headers.get("content-type", "")

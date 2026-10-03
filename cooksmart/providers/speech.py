@@ -6,6 +6,8 @@ or type, and nothing is acted on.
 """
 from __future__ import annotations
 
+from .. import trace
+
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -56,11 +58,16 @@ class MockSpeechProvider:
         return Transcript(payload, self._conf(0.95), lang, "mock")
 
     def transcribe_audio(self, audio, mime, lang, hint=None):
+        req = {"note": "no Gnani key: nothing was sent", "audio_file": audio, "language_code": lang, "browser_transcript_hint": hint}
         if hint and hint.strip():
+            trace.record("gnani", "Gnani STT (mock: browser transcript used)", req, {"text": hint.strip()})
             return Transcript(hint.strip(), self._conf(0.85), lang, "browser")
+        trace.record("gnani", "Gnani STT (mock)", req, {"error": "no transcript available without a speech service"}, "error")
         return Transcript("", 0.0, lang, "mock", error="no transcript available without a speech service")
 
     def synthesize(self, text, lang):
+        trace.record("gnani", "Gnani TTS (mock: browser voice)", {"note": "no Gnani key: nothing was sent", "text": text, "language": lang},
+                     {"audio": None})
         return None               # the browser reads the text aloud instead
 
     def describe(self):

@@ -113,6 +113,17 @@ CREATE TABLE IF NOT EXISTS story (
     text TEXT NOT NULL,
     deltas TEXT NOT NULL DEFAULT '[]'                -- [{item, qty (+ in, - out), unit}]
 );
+CREATE TABLE IF NOT EXISTS trace (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    kind TEXT NOT NULL,                              -- input | gnani | message
+    label TEXT NOT NULL,
+    request TEXT,
+    response TEXT,
+    status TEXT NOT NULL DEFAULT 'ok',               -- ok | error
+    ms INTEGER
+);
 CREATE TABLE IF NOT EXISTS calls (
     reference_id TEXT PRIMARY KEY,                   -- our clientReferenceId: household:plan:type:n
     household_id TEXT NOT NULL,

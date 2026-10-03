@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from . import repo
+from . import repo, trace
 from .db import DB
 
 
@@ -32,6 +32,7 @@ class MockChannel:
 
     def send_owner(self, hid, text, buttons=None):
         repo.add_message(self.db, hid, "owner", "agent", text, {"buttons": buttons} if buttons else None)
+        trace.record("message", "To owner", {"text": text, **({"buttons": buttons} if buttons else {})}, hid=hid)
 
     def send_cook(self, hid, msg):
         """The cook gets a voice note. If a speech service is configured the audio is synthesised (and cached);
@@ -45,3 +46,5 @@ class MockChannel:
             if note:
                 payload["media"] = repo.add_media(self.db, hid, note.key, note.mime, note.audio)
         repo.add_message(self.db, hid, "cook", "agent", msg.text, payload)
+        trace.record("message", "To cook (voice note)", {"text": msg.text, "language": msg.lang,
+                                                            "voice": "Gnani audio" if payload.get("media") else "browser voice"}, hid=hid)

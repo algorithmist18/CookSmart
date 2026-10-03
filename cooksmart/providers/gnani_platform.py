@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import httpx
 
+from .. import trace
+
 BASE = "https://api.inya.ai/platform"
 
 
@@ -25,11 +27,21 @@ class GnaniPlatform:
         self.client = client or httpx.Client(timeout=timeout)
 
     def _call(self, method: str, path: str, **kw) -> dict:
+        req = {"method": method, "url": self.base + path, **({"params": kw["params"]} if kw.get("params") else {}),
+               **({"body": kw["json"]} if kw.get("json") is not None else {})}
+        label = f"Gnani Platform: {method} {path.split('/')[-1] if path.rstrip('/').split('/')[-1] in ('trigger_call', 'validate') else path}"
+        with trace.timed() as t:
+            try:
+                r = self.client.request(method, self.base + path, headers={"x-api-key": self.api_key,
+                                                                           "Content-Type": "application/json"}, **kw)
+            except httpx.HTTPError as e:
+                trace.record("gnani", label, req, {"error": str(e)}, "error", t.ms)
+                raise PlatformError(0, f"could not reach Gnani: {e}") from e
         try:
-            r = self.client.request(method, self.base + path, headers={"x-api-key": self.api_key,
-                                                                       "Content-Type": "application/json"}, **kw)
-        except httpx.HTTPError as e:
-            raise PlatformError(0, f"could not reach Gnani: {e}") from e
+            _b = r.json()
+        except ValueError:
+            _b = r.text[:600]
+        trace.record("gnani", label, req, {"status": r.status_code, "body": _b}, "ok" if r.status_code < 400 else "error", t.ms)
         try:
             body = r.json()
         except ValueError:

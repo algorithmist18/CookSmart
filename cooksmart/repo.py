@@ -41,7 +41,7 @@ def find_household_by_phone(db: DB, phone: str) -> tuple[dict, str] | None:
 
 def wipe_household_data(db: DB, hid: str) -> None:
     """Scenario reset: delete everything the household has accumulated (keeps the household row)."""
-    for table in ("inventory", "meals", "plans", "orders", "messages", "audit", "memory", "calls", "story"):
+    for table in ("inventory", "meals", "plans", "orders", "messages", "audit", "memory", "calls", "story", "trace"):
         db.execute(f"DELETE FROM {table} WHERE household_id=?", (hid,))
 
 
@@ -228,4 +228,20 @@ def list_story(db: DB, hid: str, plan_id: int | None = None) -> list[dict]:
                     (hid, plan_id) if plan_id else (hid,))
     for r in rows:
         r["deltas"] = json.loads(r["deltas"])
+    return rows
+
+
+# ---------- trace (what came in, what went to Gnani, what was sent to people) ----------
+def add_trace(db: DB, *, household_id: str, kind: str, label: str, request=None, response=None, status: str = "ok",
+              ms: int | None = None) -> None:
+    db.execute("INSERT INTO trace (household_id, ts, kind, label, request, response, status, ms) VALUES (?,?,?,?,?,?,?,?)",
+               (household_id, now_iso(), kind, label, json.dumps(request, ensure_ascii=False, default=str) if request is not None else None,
+                json.dumps(response, ensure_ascii=False, default=str) if response is not None else None, status, ms))
+
+
+def list_trace(db: DB, hid: str, after: int = 0, limit: int = 200) -> list[dict]:
+    rows = db.query("SELECT * FROM trace WHERE household_id=? AND id>? ORDER BY id LIMIT ?", (hid, after, limit))
+    for r in rows:
+        r["request"] = json.loads(r["request"]) if r["request"] else None
+        r["response"] = json.loads(r["response"]) if r["response"] else None
     return rows

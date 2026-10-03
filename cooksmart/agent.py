@@ -11,7 +11,7 @@ import datetime as dt
 import random
 import re
 
-from . import callresult, cookbrief, cookmsgs, guards, repo
+from . import callresult, cookbrief, cookmsgs, guards, repo, trace
 from . import inventory as inv
 from .channels import MessageChannel
 from .db import DB
@@ -327,6 +327,8 @@ class Agent:
     # ------------------------------------------------------------------ owner chat
     def handle_owner(self, hid: str, text: str) -> None:
         h = self._h(hid)
+        trace.bind(hid)
+        trace.record("input", "Owner message", {"text": text})
         repo.add_message(self.db, hid, "owner", "user", text)
         a = self.nlu.owner(text, self._owner_ctx(hid))
         act = a["action"]
@@ -881,6 +883,8 @@ class Agent:
     # ------------------------------------------------------------------ delivery + door handshake
     def rider_arrives(self, hid: str, voice_sample: str) -> dict:
         h = self._h(hid)
+        trace.bind(hid)
+        trace.record("input", "Door: rider arrived", {"voice_sample": voice_sample})
         order = next((o for o in reversed(repo.list_orders(self.db, hid)) if o["status"] == "accepted"), None)
         if not order:
             self._say(hid, "🚪 A rider is at the door but there's no open order. Not handing anything over.")
@@ -901,6 +905,8 @@ class Agent:
         return {"released": False, "otp_required": True}
 
     def door_otp(self, hid: str, code: str) -> dict:
+        trace.bind(hid)
+        trace.record("input", "Door: OTP entered", {"code": "****"})
         order = next((o for o in reversed(repo.list_orders(self.db, hid)) if o["status"] == "accepted"), None)
         if not order or not order["otp"]:
             return {"released": False, "reason": "no OTP pending"}
@@ -933,12 +939,16 @@ class Agent:
     # ------------------------------------------------------------------ cook chat
     def handle_cook(self, hid: str, text: str, voice: bool = True) -> None:
         """Typed text from the cook (optionally flagged as a voice note in the simulator)."""
+        trace.bind(hid)
+        trace.record("input", "Cook message" + (" (voice note)" if voice else ""), {"text": text})
         lang = self._h(hid)["cook_language"]
         tr = self.speech.transcribe(text, lang) if voice else Transcript(text, 1.0, lang, "text")
         self._cook_turn(hid, tr, shown=text, voice=voice)
 
     def handle_cook_audio(self, hid: str, audio: bytes, mime: str = "audio/wav", hint: str | None = None) -> None:
         """A real recorded voice note: transcribed by the speech provider, then handled like any message."""
+        trace.bind(hid)
+        trace.record("input", "Cook voice note", {"audio": audio, "mime": mime, "browser_transcript_hint": hint})
         lang = self._h(hid)["cook_language"]
         tr = self.speech.transcribe_audio(audio, mime, lang, hint)
         repo.audit(self.db, hid, "stt", source=tr.source, confidence=round(tr.confidence, 2), chars=len(tr.text),
@@ -1191,6 +1201,8 @@ class Agent:
         if row["status"] == "processed":
             return {"ok": True, "duplicate": True}
         hid = row["household_id"]
+        trace.bind(hid)
+        trace.record("input", "Gnani webhook: call ended", {k: v for k, v in payload.items() if k != "transcript"})
         repo.update_call(self.db, row["reference_id"], status="processed", conversation_id=oc.conversation_id,
                          disposition=oc.disposition, payload={k: v for k, v in payload.items() if k != "transcript"})
         plan = repo.get_plan(self.db, hid, row["plan_id"]) or repo.latest_plan(self.db, hid)

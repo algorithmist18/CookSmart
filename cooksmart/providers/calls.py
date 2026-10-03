@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from .. import trace
 from .gnani_platform import GnaniPlatform
 
 
@@ -39,6 +40,9 @@ class MockCallProvider:
             self.fail_next = False
             raise RuntimeError("the call could not be placed")
         self.placed.append(req)
+        trace.record("gnani", "Gnani call (mock): trigger_call", {"note": "no Gnani key: nothing was sent", "phoneNumber": req.phone,
+                     "clientReferenceId": req.reference_id, "variables": req.variables}, {"status": "mock", "conversationId": None},
+                     hid=req.household_id)
         return CallStarted(req.reference_id, "mock")
 
     def describe(self):

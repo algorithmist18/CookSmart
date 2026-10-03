@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 
+from . import trace
 from . import callresult, daystory, gnani_kb, gnani_prompt, studio
 from . import inventory as inv
 from . import profile as prof
@@ -174,6 +175,7 @@ def create_app(settings: Settings | None = None, db: DB | None = None, platform:
     agent = build_agent(settings, db, controls, platform)
     app = FastAPI(title="CookSmart")
     app.state.agent, app.state.db, app.state.controls = agent, db, controls
+    trace.set_sink(lambda **row: repo.add_trace(db, **row))
     current: dict[str, str] = {}
 
     def need(hid: str) -> dict:
@@ -321,6 +323,8 @@ def create_app(settings: Settings | None = None, db: DB | None = None, platform:
         except ValueError:
             body = {}
         args = body.get("arguments", body) if isinstance(body, dict) else {}
+        trace.bind(hid)
+        trace.record("input", "Gnani action: cook problem (mid-call)", body)
         reason = str(args.get("problem") or args.get("reason") or args.get("type") or "").lower()
         text = agent.live_cook_problem(hid, reason, args.get("item"))
         return {"text": text, "additional_info": {"inya_data": {"text": text, "user_context": {}}}}
@@ -329,6 +333,8 @@ def create_app(settings: Settings | None = None, db: DB | None = None, platform:
     def gnani_dynamic(hid: str, token: str = ""):
         check_token(token)
         need(hid)
+        trace.bind(hid)
+        trace.record("input", "Gnani asks for today's brief (start of call)")
         d = agent.dynamic_brief(hid)
         return {"additional_info": {"inya_data": {"text": d["text"], "user_context": d["user_context"]}}}
 
@@ -535,6 +541,8 @@ def create_app(settings: Settings | None = None, db: DB | None = None, platform:
         }
         if name not in actions:
             raise HTTPException(404, "unknown trigger")
+        trace.bind(hid)
+        trace.record("input", f"Button: {name.replace('_', ' ')}")
         actions[name](hid)
         return {"ok": True}
 
@@ -552,6 +560,11 @@ def create_app(settings: Settings | None = None, db: DB | None = None, platform:
         controls.reset()
         current.pop(hid, None)
         return {"ok": True}
+
+    @app.get("/api/{hid}/trace")
+    def trace_list(hid: str, after: int = 0):
+        need(hid)
+        return repo.list_trace(db, hid, after)
 
     @app.post("/api/{hid}/restock")
     def restock(hid: str):

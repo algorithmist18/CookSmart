@@ -13,7 +13,7 @@ flow runs locally with no accounts. Real providers can be swapped in later witho
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python -m cooksmart            # open http://127.0.0.1:8000
-python -m pytest               # 340 tests, fully offline
+python -m pytest               # 347 tests, fully offline
 ```
 
 Optional: `cp .env.example .env` and add `ANTHROPIC_API_KEY` so Claude plans menus and parses the cook's
@@ -33,6 +33,11 @@ reconciled once at the wrap-up from what the cook reports. The knowledge base is
 English words (फ्रिज, एक्सपायरी, स्टोरेज, कॉशन) so a cook hears the language she uses.
 Every document also has an English edition (`en_01_…` to `en_09_…`) and the FAQs carry English questions and answers, so
 the agent, the owner or a new cook can work in either language. Free text you type (notes, customs) is kept as written.
+
+**Activity** (button in the top bar, closed by default) is a side panel with everything that happened, newest at the bottom: every input
+that arrived (your messages, the cook's, the door, buttons, Gnani's webhooks), every call to Gnani with the request that was sent and what
+came back (speech to text, text to speech, the phone call; without a key it shows what *would* be sent), and every message sent to a
+person. Click a row for the full request and response. API keys never appear and audio shows as a size.
 
 **Agent Studio** keeps every edit as a version you can restore, and checks before saving: a prompt that wouldn't render
 (or uses a variable CookSmart doesn't send) is refused, and removing today's allergy cautions needs an explicit
