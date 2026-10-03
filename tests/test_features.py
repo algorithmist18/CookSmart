@@ -639,3 +639,22 @@ def test_owner_can_ask_questions_and_gets_answers_from_the_kitchen_not_a_shrug()
     _say(c, "the second one please")                                   # an ordinal picks option 2 of the meal being asked
     assert _plan(c)["stage"] == "lunch"
 
+
+
+def test_chat_handles_small_talk_and_meal_specific_skips_without_a_shrug():
+    c = _day_env()
+    _say(c, "hi")
+    assert "Hi" in _texts(c)[-1]
+    c.post("/api/h/trigger/nightly_review")
+    _say(c, "thanks")
+    assert "Anytime" in _texts(c)[-1] and _plan(c)["stage"] == "breakfast"            # small talk changes nothing
+    _say(c, "no dinner tonight")                                                       # a later meal, skipped in advance
+    p = _plan(c)
+    assert p["stage"] == "breakfast" and p["meals"] == {"dinner": []}
+    _say(c, "poha for breakfast")                                                      # names breakfast, then lunch is asked
+    p = _plan(c)
+    assert p["meals"]["breakfast"] == ["poha"] and p["stage"] == "lunch"
+    _say(c, "1")                                                                       # lunch picked; dinner was skipped so the menu is set
+    p = _plan(c)
+    assert p["stage"] == "" and p["meals"]["dinner"] == [] and p["chosen"]
+    assert "Dinner: skipped" in " ".join(_texts(c)[-3:])

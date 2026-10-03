@@ -33,7 +33,14 @@ for _rid, _r in RECIPES.items():
     DISH_ALIASES[norm(_r["name"])] = _rid
     DISH_ALIASES[norm(_r["hi"])] = _rid
     DISH_ALIASES[_rid.replace("_", " ")] = _rid
-DISH_ALIASES.update({"chicken curry": "chicken_curry", "rajma chawal": "rajma_chawal", "chole": "chole"})
+DISH_ALIASES.update({"chicken curry": "chicken_curry", "rajma chawal": "rajma_chawal", "chole": "chole",
+                     "khichdi": "moong_khichdi", "khichri": "moong_khichdi", "pulao": "veg_pulao", "paratha": "aloo_paratha",
+                     "sandwich": "veg_sandwich", "omelette": "bread_omelette", "omelet": "bread_omelette", "chilla": "besan_chilla",
+                     "cheela": "besan_chilla", "dal fry": "dal_tadka", "daal": "dal_tadka"})
+# everyday two-dish orders
+COMBOS = {"dal chawal": ["dal_tadka", "jeera_rice"], "dal rice": ["dal_tadka", "jeera_rice"], "daal chawal": ["dal_tadka", "jeera_rice"],
+          "dal roti": ["dal_tadka", "roti"], "daal roti": ["dal_tadka", "roti"], "roti sabzi": ["aloo_gobi", "roti"],
+          "sabzi roti": ["aloo_gobi", "roti"]}
 
 YES = {"haan", "han", "ha", "haa", "ji", "sahi", "yes", "y", "ok", "okay", "theek", "thik", "correct",
        "yep", "yeah", "approve", "approved", "confirm", "हां", "हा", "जी", "सही", "ठीक"}
@@ -203,6 +210,10 @@ def _dishes_in(low: str) -> list[str]:
     """Every dish named in the text, in order of appearance (longest names win, no overlaps). What is left over is
     matched loosely, so a misspelt name ('pallak panner') still finds its dish."""
     found, text = [], low
+    for phrase, rids in COMBOS.items():
+        for m in re.finditer(WORD.format(re.escape(phrase)), text):
+            found += [(m.start(), r) for r in rids]
+            text = text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
     for alias, rid in sorted(DISH_ALIASES.items(), key=lambda kv: -len(kv[0])):
         for m in re.finditer(WORD.format(re.escape(alias)), text):
             found.append((m.start(), rid))
@@ -238,10 +249,67 @@ QUESTION_WORDS = {"what", "why", "how", "which", "when", "where", "who", "kya", 
                   "kahan", "kaise", "is", "are", "do", "does", "can", "will", "should", "could", "क्या", "कब", "क्यों", "कितना", "कितने"}
 
 
+REQUEST_RE = re.compile(r"^(?:can|could|will|would)\s+(?:you|we|i|u)\s+(?:please\s+)?(?:make|show|give|change|plan|do|add|order|cook|get|try|pick|suggest|find)\b|^(?:please|pls)\b")
+
+
 def is_question(text: str) -> bool:
     low = norm(text).strip()
     toks = tokens(text)
+    if REQUEST_RE.match(low):                       # "can you make it quicker?" is a request, not a question
+        return False
     return len(toks) >= 3 and ("?" in text or toks[0] in QUESTION_WORDS)
+
+
+MEAL_KW = {"breakfast": r"breakfast|nashta|naashta|nasta|naashte|nashte|subah ka khana|in the morning|subah",
+           "lunch": r"lunch|dopahar ka khana|dopahar|in the afternoon",
+           "dinner": r"dinner|raat ka khana|raat ko|raat me|raat mein|at night|tonight|in the evening"}
+_ALL_KW = "|".join(MEAL_KW.values())
+_CONNECT = re.compile(r"(?:\bfor|\bke liye|\bka|\bke|\bmein|\bme|\bko|\bat|\bin|\bki)\s*$")
+_NEGATION = re.compile(r"\b(no|nothing|nope|skip|without|not needed|nahi|nahin|mat|chhod|chod|don'?t)\b")
+
+
+def _meal_request(low: str) -> dict | None:
+    """'poha for breakfast and dal rice for lunch', 'breakfast poha, lunch dal rice', 'dinner mein khichdi',
+    'nothing for lunch' -> which dishes for which meal (or which meal to skip)."""
+    hits = [(m.start(), m.end(), meal) for meal, pat in MEAL_KW.items() for m in re.finditer(rf"\b(?:{pat})\b", low)]
+    if not hits:
+        return None
+    hits.sort()
+    named: dict[str, list[str]] = {}
+    skip: list[str] = []
+    for i, (s, e, meal) in enumerate(hits):
+        prev_end = hits[i - 1][1] if i else 0
+        next_start = hits[i + 1][0] if i + 1 < len(hits) else len(low)
+        before, after = low[prev_end:s], low[e:next_start]
+        if re.match(r"in the|at night|tonight", low[s:e]) and _dishes_in(before):
+            dishes = _dishes_in(before)                      # "<dish> in the morning"
+        elif _CONNECT.search(before.rstrip() + " ") and _dishes_in(_CONNECT.sub(" ", before.rstrip() + " ")):
+            dishes = _dishes_in(before)                      # "<dish> for <meal>"
+        else:
+            dishes = _dishes_in(after)                       # "<meal> <dish>"
+        if dishes:
+            named.setdefault(meal, [])
+            named[meal] += [d for d in dishes if d not in named[meal]]
+        elif _NEGATION.search(low[max(0, s - 18):s]) or _NEGATION.search(after[:22]):
+            skip.append(meal)
+    if named:
+        return {"action": "meal_request", **{m: named.get(m, []) for m in MEAL_KW}}
+    if skip:
+        return {"action": "skip", "meal": skip[0]}
+    return None
+
+
+YES_PHRASES = re.compile(r"\b(go ahead|sounds good|looks good|book it|place (?:the |it |my )?order|order it|do it|that works|perfect|great|fine|sure|"
+                         r"all right|alright|karo|kar do|kardo|theek hai|thik hai|chalega|done)\b")
+NO_PHRASES = re.compile(r"\b(don'?t (?:order|buy|place|book)|do not (?:order|buy|place)|hold it|cancel|not now|no thanks|leave it|forget it|"
+                        r"mat (?:karo|lo|mangao)|nahi chahiye|rehne do|reh ne do)\b")
+CHAT = {
+    "thanks": re.compile(r"^(?:thanks|thank you|thankyou|thx|ty|shukriya|dhanyavad|dhanyawad|धन्यवाद|शुक्रिया)\b"),
+    "hello": re.compile(r"^(?:hi|hii+|hello|hey|namaste|namaskar|good (?:morning|afternoon|evening)|नमस्ते)\b"),
+    "night": re.compile(r"^(?:good ?night|gn|shubh ratri|शुभ रात्रि)\b"),
+    "pause": re.compile(r"^(?:hold on|wait|one sec(?:ond)?|just a (?:sec|minute|moment)|ek minute|ruko|ek sec)\b"),
+    "bye": re.compile(r"^(?:bye|see you|ttyl|tata)\b"),
+}
 
 
 def parse_owner(text: str) -> dict:
@@ -256,7 +324,11 @@ def parse_owner(text: str) -> dict:
     if m:
         return {"action": "relay", "text": m.group(1).strip()}
     if re.match(r"^(?:skip|chhod do|chod do)\b", low):
-        return {"action": "skip"}
+        mk = _meal_request(low)
+        return {"action": "skip", **({"meal": mk["meal"]} if mk and mk.get("action") == "skip" else {})} if not (mk and mk["action"] == "meal_request") else mk
+    for kind, pat in CHAT.items():
+        if pat.search(low) and len(toks) <= 5:
+            return {"action": "chat", "kind": kind}
     m = re.match(r"^mode\s+(auto|approve)\b", low)
     if m:
         return {"action": "mode", "mode": m.group(1)}
@@ -300,6 +372,10 @@ def parse_owner(text: str) -> dict:
     m = re.search(r"\b(\d+)\s*(?:guests?|mehman|people extra|extra)\b", low) or re.search(r"\bguests?\s*[:=]?\s*(\d+)", low)
     if m:
         flags["guests"] = int(m.group(1))
+    if not m and re.search(r"\b(guests?|mehman)\b", low) and not re.search(r"\b(no|not|without)\s+(guests?|mehman)\b", low):
+        n = re.search(r"\b(\d+)\b", low)                      # "we have guests tomorrow, 5 people"
+        if n:
+            flags["guests"] = int(n.group(1))
     if re.search(r"\b(no|not|without)\s+(guests?|mehman)\b", low):
         flags["guests"] = 0
     if re.search(r"\b(fast|fasting|vrat|upvas|navratri|ekadashi)\b", low):
@@ -333,21 +409,25 @@ def parse_owner(text: str) -> dict:
     if prefs:
         return {"action": "prefs", "prefs": prefs}
 
-    kw = {"breakfast": r"breakfast|nashta|naashta|nasta", "lunch": r"lunch", "dinner": r"dinner|raat\s+ka\s+khana"}
-    allkw = "|".join(kw.values())
-    meals_req = {m: _dishes_in(g.group(1)) for m, pat in kw.items()
-                 if (g := re.search(rf"\b(?:{pat})\b(.*?)(?=\b(?:{allkw})\b|$)", low))}
-    if any(meals_req.values()):
-        return {"action": "meal_request", **{m: meals_req.get(m, []) for m in kw}}
+    mr = _meal_request(low)
+    if mr:
+        return mr
 
     items = find_items(toks)
     have_words = {"have", "hai", "है", "there", "got", "bought", "left", "bacha", "bache", "बचा", "बचे", "stock"}
-    zero_words = {"no", "nahi", "nahin", "khatam", "finished", "used", "out", "नहीं", "खत्म"}
+    zero_words = {"no", "nahi", "nahin", "khatam", "finished", "used", "out", "नहीं", "खत्म", "over", "bad", "rotten", "spoiled",
+                  "spoilt", "kharab", "sad", "sada", "expired", "gone", "ran"}
     qty = find_number(toks)
     stock_like = items and (_has_unit(toks) or any(t in have_words for t in toks) or any(t in zero_words for t in toks)
                             or (qty is not None and len(toks) <= 3))
     dishes = _dishes_in(low)
-    wants = re.search(r"\b(can|could|may|shall|let'?s|want|wanna|make|cook|bana\w*|chahiye|please|i'?d like|would like|prefer)\b", low)
+    wants = re.search(r"\b(can|could|may|shall|let'?s|want|wanna|make|cook|bana\w*|chahiye|please|i'?d like|would like|prefer|"
+                      r"i'?ll (?:have|take|go for|go with|eat)|give me|let me have|we'?ll have|i'?ll)\b", low)
+    evidence = (set(have_words) | zero_words | {"left", "bacha", "bache", "stock", "bought", "aaya", "aayi"}) - {"no", "nahi", "nahin", "नहीं"}
+    if (items and not dishes and len(toks) >= 3 and re.search(r"\b(no|without|bina|avoid|not|don'?t want|nahi chahiye|mat)\b", low)
+            and not (evidence & set(toks)) and qty is None and not _has_unit(toks)
+            and re.search(r"\b(in|please|today|tomorrow|this|that|for|dinner|lunch|breakfast|dish|meal|it|wala|mein|me)\b", low)):
+        return {"action": "other", "text": text}          # "no onion in it": a wish about the dish, not a stock report
     if dishes and (not stock_like or wants):          # "can I have palak paneer?" asks for a dish, it doesn't report stock
         return {"action": "dish_request", "dishes": dishes}
     if stock_like and is_question(text):               # "do we have paneer?" asks, it doesn't report
@@ -369,6 +449,10 @@ def parse_owner(text: str) -> dict:
     ords = [ORDINALS[t] for t in toks if t in ORDINALS]
     if ords and len(toks) <= 6 and not items:                       # "the second one", "doosra wala", "option three"
         return {"action": "choose", "choices": sorted(set(ords))}
+    if len(toks) <= 7 and NO_PHRASES.search(low):
+        return {"action": "no", "text": text}
+    if len(toks) <= 7 and YES_PHRASES.search(low):
+        return {"action": "yes"}
     if any(t in YES for t in toks):
         return {"action": "yes"}
     if any(t in NO for t in toks):

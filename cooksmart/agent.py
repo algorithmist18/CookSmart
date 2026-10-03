@@ -32,6 +32,11 @@ NIGHT_MINUTES_LEFT = 630     # ~21:30 order -> 08:00 cook arrival
 MORNING_MINUTES_LEFT = 30
 PROBLEMS = ("used_up", "remaining", "low", "spoiled", "cannot_cook")
 
+CHAT_REPLIES = {
+    "thanks": "🙂 Anytime.", "hello": "👋 Hi! Say *help* to see what I can do, or tell me about tomorrow's meals.",
+    "night": "🌙 Good night!", "pause": "👍 Sure, take your time. I'll wait.", "bye": "👋 See you.",
+}
+
 HELP = (
     "👋 *I'm CookSmart.* Here's what you can tell me:\n"
     "• *1*, *2*, *3*, a dish name, or *skip*: choose breakfast, then lunch, then dinner\n"
@@ -385,6 +390,8 @@ class Agent:
             return self._redo(hid)
         if act == "restock":
             return self.restock(hid)
+        if act == "chat":
+            return self._say(hid, CHAT_REPLIES[a["kind"]])
         if act == "ask":
             return self._answer(hid, a.get("text") or text)
         if act == "confirm_all":
@@ -402,6 +409,11 @@ class Agent:
         if act == "meal_request" and state in ("review", "approval", "held", "ready"):
             return self._choose_meals(hid, plan, a["breakfast"], a["lunch"], a.get("dinner", []))
         if act == "skip" and state == "review" and plan["stage"]:
+            meal = a.get("meal")
+            if meal and meal != plan["stage"]:                      # "no dinner tonight" while still choosing lunch
+                meals = {**plan["meals"], meal: []}
+                repo.update_plan(self.db, hid, plan["id"], meals=meals)
+                return self._say(hid, f"✅ {daystory.ICON[meal]} {meal.title()}: skipped. I won't ask about it.")
             return self._pick_for_stage(hid, plan, [])
         if act == "dish_request" and state in ("review", "approval", "held", "ready"):
             if state == "review" and plan["stage"]:
