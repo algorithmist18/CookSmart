@@ -74,8 +74,10 @@ def cautions_for(prefs: dict, cook_day: str) -> list[str]:
 
 
 def _dishes(plan: dict, chosen: list[str]) -> list[str]:
-    labelled = cookmsgs.dish_names_by_meal(daystory.meals_of(plan)) if set(plan.get('chosen') or []) == set(chosen) else None
-    return [labelled] if labelled else [RECIPES[r]['hi'] for r in chosen]
+    meals = daystory.meals_of(plan) if set(plan.get('chosen') or []) == set(chosen) else {}
+    if any(meals.values()):                       # "ब्रेकफास्ट: …; लंच: …; डिनर: …" (no icons: this is also spoken)
+        return ["; ".join(cookmsgs.meal_lines(meals, icons=False))]
+    return [RECIPES[r]['hi'] for r in chosen]
 
 
 def build(db, hid: str, h: dict, plan: dict, *, call_type: str = "brief", start=None, wait=None,

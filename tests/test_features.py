@@ -414,7 +414,7 @@ def test_cook_is_told_which_dish_is_for_which_meal():
     plan = c.get("/api/h/owner/state").json()["plan"]
     cook = " ".join(m["text"] for m in c.get("/api/h/cook/messages").json())
     if plan["meals"]["breakfast"] or plan["meals"]["dinner"]:
-        assert "लंच में" in cook
+        assert "ब्रेकफास्ट:" in cook and "लंच:" in cook and "डिनर:" in cook
     assert "₹" not in cook
 
 
@@ -509,3 +509,20 @@ def test_options_always_show_three_meals_and_what_to_buy_even_with_stale_stock()
     assert text.count("🛒") >= 3
     props = c.get("/api/h/owner/state").json()["plan"]["proposals"]
     assert all(p["meals"]["breakfast"] and p["meals"]["dinner"] for p in props)       # a small shop fills the gaps
+
+
+def test_cook_brief_always_lists_breakfast_lunch_and_dinner():
+    from cooksmart import cookbrief, cookmsgs
+    from cooksmart.providers.gnani import spoken_text
+    lines = cookmsgs.meal_lines({"lunch": ["dal_tadka", "roti"]})
+    assert len(lines) == 3 and lines[0].endswith("आज नहीं बनाना") and "दाल" in lines[1]
+    assert lines[2].endswith("आज नहीं बनाना")
+    c = _day_env()
+    c.post("/api/h/trigger/nightly_review")
+    c.post("/api/h/owner/message", json={"text": "lunch dal tadka and roti"})          # only lunch named by the owner
+    c.post("/api/h/owner/message", json={"text": "approve"})
+    c.post("/api/h/trigger/morning")
+    cook = [m["text"] for m in c.get("/api/h/cook/messages").json()][-1]
+    assert cook.count("\n") >= 3 and "ब्रेकफास्ट:" in cook and "लंच:" in cook and "डिनर:" in cook
+    assert "🌅" in cook
+    assert "🌅" not in spoken_text(cook) and "\n" not in spoken_text(cook)             # the voice reads words, not icons

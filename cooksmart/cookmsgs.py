@@ -24,6 +24,8 @@ T = {
     "eod": "आज क्या-क्या खत्म हुआ या कितना बचा? बोलकर बता दें।",
     "thanks": "धन्यवाद! 🙏",
     "greet": "नमस्ते! 🙏 आप पहुँच जाएँ तो बता दें, मैं आज का मेन्यू भेज दूँगा।",
+    "brief_meals": "नमस्ते! आज का मेन्यू:\n{dishes}",
+    "switch_meals": "योजना बदली गई है। आज का मेन्यू:\n{dishes}",
     "menu_repeat": "आज बनाना है: {dishes}।",
     "help": "समझ नहीं आया। आप ऐसे बोल सकते हैं: 'आ गई', 'पनीर खत्म', 'गैस खराब है', 'समय कम है', 'खाना बन गया'।",
     "leave_ok": "ठीक है, बता दिया गया है। आराम करें। 🙏",
@@ -41,10 +43,19 @@ def dish_names(recipe_ids: list[str]) -> str:
 MEAL_HI = {"breakfast": "ब्रेकफास्ट", "lunch": "लंच", "dinner": "डिनर"}
 
 
+MEAL_ICON = {"breakfast": "🌅", "lunch": "☀️", "dinner": "🌙"}
+NO_MEAL_HI = "आज नहीं बनाना"
+
+
+def meal_lines(meals: dict, icons: bool = True) -> list[str]:
+    """One line for each of breakfast, lunch and dinner; a meal with nothing planned says so."""
+    return [(MEAL_ICON[m] + " " if icons else "") + f"{MEAL_HI[m]}: " + (dish_names(meals[m]) if meals.get(m) else NO_MEAL_HI)
+            for m in ("breakfast", "lunch", "dinner")]
+
+
 def dish_names_by_meal(meals: dict) -> str | None:
-    """'ब्रेकफास्ट में पोहा, लंच में … , डिनर में …' when more than one meal is planned, else None."""
-    parts = [f"{MEAL_HI[m]} में {dish_names(meals[m])}" for m in ("breakfast", "lunch", "dinner") if meals.get(m)]
-    return ", ".join(parts) if len(parts) > 1 else None
+    """The three meals, one per line, or None when no meals are known (then the plain dish list is used)."""
+    return "\n".join(meal_lines(meals)) if any(meals.get(m) for m in MEAL_HI) else None
 
 
 def render(key: str, lang: str = "hi-IN", **kw) -> CookMessage:

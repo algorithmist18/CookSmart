@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import re
 import json
 
 import httpx
@@ -76,6 +77,13 @@ def _find_audio(obj) -> bytes | None:
     return None
 
 
+_PICTO = re.compile("[\U0001F000-\U0001FFFF\u2600-\u27BF\uFE0F\u200d]")
+
+
+def spoken_text(text: str) -> str:
+    return re.sub(r"\s*\n+\s*", "। ", _PICTO.sub("", text)).replace("।।", "।").strip()
+
+
 class GnaniSpeechProvider:
     def __init__(self, api_key: str, *, stt_url: str = STT_URL, tts_url: str = TTS_URL, voice: str = "Nalini",
                  model: str = "timbre-v2.5", sample_rate: int = 48000, bias_words: list[str] | None = None,
@@ -119,6 +127,7 @@ class GnaniSpeechProvider:
 
     # ------------------------------------------------------------ TTS
     def synthesize(self, text, lang):
+        text = spoken_text(text)                          # icons and line breaks are for the screen, not the voice
         key = hashlib.sha1(f"{self.model}|{self.voice}|{lang}|{self.sample_rate}|{text}".encode()).hexdigest()
         if key in self._tts_cache:
             return self._tts_cache[key]

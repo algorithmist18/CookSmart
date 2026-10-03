@@ -631,11 +631,13 @@ class Agent:
 
     # ------------------------------------------------------------------ S7
     def _compose_brief(self, lang: str, dishes: list[str], start: list[str], wait: list[str], switched=False, meals=None):
-        names = cookmsgs.dish_names_by_meal(meals or {}) or cookmsgs.dish_names(dishes)
+        by_meal = cookmsgs.dish_names_by_meal(meals or {})
+        names = by_meal or cookmsgs.dish_names(dishes)
+        sfx = "_meals" if by_meal else ""
         if switched:
-            msg = cookmsgs.render("switch", lang, dishes=names)
+            msg = cookmsgs.render("switch" + sfx, lang, dishes=names)
         else:
-            msg = cookmsgs.render("brief", lang, dishes=names)
+            msg = cookmsgs.render("brief" + sfx, lang, dishes=names)
             if wait and start:
                 msg = cookmsgs.concat(msg, cookmsgs.render("brief_wait", lang, wait=cookmsgs.dish_names(wait),
                                                            start=cookmsgs.dish_names(start)))
@@ -826,7 +828,7 @@ class Agent:
             return self._cook_say(hid, cookmsgs.render("no_menu", lang))
         if plan["state"] == "briefed":
             b = plan["brief"] or {"start": plan["chosen"], "wait": []}
-            return self._cook_say(hid, self._compose_brief(lang, plan["chosen"], b["start"], b["wait"]))
+            return self._cook_say(hid, self._compose_brief(lang, plan["chosen"], b["start"], b["wait"], meals=daystory.meals_of(plan)))
         if plan["state"] == "closing":
             return self._cook_say(hid, cookmsgs.render("eod", lang))
         self.morning_handoff(hid)
@@ -1000,7 +1002,7 @@ class Agent:
     def _chat_brief(self, hid: str, plan: dict) -> None:
         lang = self._h(hid)["cook_language"]
         b = plan["brief"] or {"start": plan["chosen"], "wait": []}
-        self._cook_say(hid, self._compose_brief(lang, plan["chosen"], b["start"], b["wait"]))
+        self._cook_say(hid, self._compose_brief(lang, plan["chosen"], b["start"], b["wait"], meals=daystory.meals_of(plan)))
 
     def _problem_applies(self, plan: dict, reason: str) -> bool:
         """Is the reported problem still a problem for the chosen dishes? (False once a switch already happened.)"""
