@@ -150,6 +150,7 @@
   /* ---------- activity panel (closed by default) ---------- */
   #trace { position:fixed; top:56px; right:0; bottom:0; width:min(420px,100vw); z-index:25; background:var(--card); border-left:1px solid var(--line); box-shadow:-8px 0 24px #0002; display:flex; flex-direction:column; }
   .trhead { display:flex; align-items:center; gap:10px; padding:10px 12px; border-bottom:1px solid var(--line); } .trhead .seg button { padding:3px 9px; font-size:12.5px; }
+  .trhead .link { white-space:nowrap; }
   .trhint { padding:6px 12px; font-size:12px; color:var(--mut); }
   #trList { flex:1; overflow:auto; padding:0 8px 12px; }
   .tr { border:1px solid var(--line); border-radius:9px; padding:6px 9px; margin-bottom:6px; cursor:pointer; font-size:12.5px; }
@@ -406,7 +407,7 @@
   <div class="trhead"><b>Activity</b>
     <span class="seg" id="trFilter"><button data-k="all" class="on">All</button><button data-k="input">In</button><button data-k="gnani">Gnani</button><button data-k="message">Out</button></span>
     <span class="grow"></span><button class="link" id="trTest" title="Speak a phrase through Gnani and listen to it again">Test Gnani</button><button class="link" id="trClear">Clear</button><button class="link" id="trClose" aria-label="Close">✕</button></div>
-  <div class="trhint">Click a row for the full request and response.</div>
+  <div class="trhint">Gnani rows show request and response. Click any row to open or close it.</div>
   <div id="trList"></div>
 </aside>
 <div id="gtoast" hidden></div>
@@ -845,22 +846,33 @@ $('#gear').onclick = e => e.stopPropagation(); document.addEventListener('click'
 setInterval(() => { $('#clock').textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }, 1000);
 
 /* ================= activity panel ================= */
-let trAfter = 0, trRows = [], trKind = 'all'; const trOpenIds = new Set(); let trFresh = 0;
+let trAfter = 0, trRows = [], trKind = 'all'; const trOpenIds = new Set(), trClosedIds = new Set(); let trFresh = 0;
+const trIsOpen = r => r.kind === 'gnani' ? !trClosedIds.has(r.id) : trOpenIds.has(r.id);      // Gnani rows show their response without a click
+function trFindText(v, d = 0) {
+  if (v === null || v === undefined || d > 4 || typeof v === 'string') return null;
+  for (const k of ['transcript', 'transcription', 'text', 'recognized_text']) if (typeof v[k] === 'string' && v[k]) return v[k];
+  for (const x of Object.values(v)) { const t = typeof x === 'object' ? trFindText(x, d + 1) : null; if (t) return t; }
+  return null;
+}
 const trTag = { input: 'IN', gnani: 'GNANI', message: 'OUT' };
 const trJson = v => v === null || v === undefined ? '' : esc(typeof v === 'string' ? v : JSON.stringify(v, null, 2));
 function trSummary(r) {
   const q = r.request || {}, a = r.response || {};
   if (r.kind === 'message') return String(q.text || '').replace(/\n/g, ' · ');
-  if (r.kind === 'gnani') return (a.status !== undefined ? `HTTP ${a.status}` : a.error ? 'error' : a.text ? `→ "${a.text}"` : a.audio === null ? 'browser voice' : 'sent') + (r.ms !== null ? ` · ${r.ms} ms` : '');
+  if (r.kind === 'gnani') {
+    const heard = trFindText(a.body) || a.text, what = a.error ? 'error: ' + a.error : heard ? `heard “${heard}”` : typeof a.body === 'string' && a.body.startsWith('<') ? a.body.replace(/[<>]/g, '') : a.audio === null ? 'browser voice' : '';
+    return (a.status !== undefined ? `HTTP ${a.status}` : 'sent') + (r.ms !== null ? ` · ${r.ms} ms` : '') + (what ? ' · ' + what : '');
+  }
   return q.text !== undefined ? String(q.text) : Object.keys(q).length ? JSON.stringify(q) : '';
 }
 function drawTrace() {
   const rows = trRows.filter(r => trKind === 'all' || r.kind === trKind);
-  $('#trList').innerHTML = rows.length ? rows.map(r => `<div class="tr ${r.kind} ${r.status === 'error' ? 'error' : ''} ${trOpenIds.has(r.id) ? 'open' : ''} ${r.id > trFresh ? 'fresh' : ''}" data-id="${r.id}">
+  $('#trList').innerHTML = rows.length ? rows.map(r => `<div class="tr ${r.kind} ${r.status === 'error' ? 'error' : ''} ${trIsOpen(r) ? 'open' : ''} ${r.id > trFresh ? 'fresh' : ''}" data-id="${r.id}">
     <div class="trh"><span class="trt">${r.ts.slice(11, 19)}</span><span class="trk">${trTag[r.kind] || r.kind}</span><span class="trl">${esc(r.label)}</span></div>
     <div class="trs">${esc(trSummary(r))}</div>
-    <div class="trb" ${trOpenIds.has(r.id) ? '' : 'hidden'}>${r.request !== null ? `<b>${r.kind === 'message' ? 'Message' : 'Request'}</b><pre>${trJson(r.request)}</pre>` : ''}${r.response !== null ? `<b>Response</b><pre>${trJson(r.response)}</pre>` : ''}</div></div>`).join('') : '<p class="small mut" style="padding:10px">Nothing yet. Press the button on the right.</p>';
-  $$('#trList .tr').forEach(el => el.onclick = () => { const id = +el.dataset.id; trOpenIds.has(id) ? trOpenIds.delete(id) : trOpenIds.add(id); el.classList.toggle('open'); $('.trb', el).hidden = !trOpenIds.has(id); });
+    <div class="trb" ${trIsOpen(r) ? '' : 'hidden'}>${r.request !== null ? `<b>${r.kind === 'message' ? 'Message' : 'Request'}</b><pre>${trJson(r.request)}</pre>` : ''}${r.response !== null ? `<b>Response</b><pre>${trJson(r.response)}</pre>` : ''}</div></div>`).join('') : '<p class="small mut" style="padding:10px">Nothing yet. Press the button on the right.</p>';
+  $$('#trList .tr').forEach(el => el.onclick = () => { const id = +el.dataset.id, r = trRows.find(x => x.id === id), open = !trIsOpen(r);
+    (r.kind === 'gnani' ? (open ? trClosedIds.delete(id) : trClosedIds.add(id)) : (open ? trOpenIds.add(id) : trOpenIds.delete(id))); el.classList.toggle('open', open); $('.trb', el).hidden = !open; });
   trFresh = trRows.length ? trRows[trRows.length - 1].id : 0;
 }
 async function pullTrace() {
@@ -868,7 +880,7 @@ async function pullTrace() {
   const rows = await api(`${HID}/trace?after=${trAfter}`);
   if (rows.length) { trAfter = rows[rows.length - 1].id; trRows.push(...rows); drawTrace(); const l = $('#trList'); l.scrollTop = l.scrollHeight; }
 }
-const resetTrace = () => { trAfter = 0; trRows = []; trFresh = 0; trOpenIds.clear(); drawTrace(); };
+const resetTrace = () => { trAfter = 0; trRows = []; trFresh = 0; trOpenIds.clear(); trClosedIds.clear(); drawTrace(); };
 $('#traceBtn').onclick = e => { e.stopPropagation(); $('#trace').hidden = !$('#trace').hidden; if (!$('#trace').hidden) { drawTrace(); pullTrace(); } };
 $('#trClose').onclick = () => $('#trace').hidden = true;
 $('#trTest').onclick = async () => {
@@ -877,7 +889,7 @@ $('#trTest').onclick = async () => {
     toast(r.error ? 'Gnani: ' + r.error : r.live ? `Gnani heard: “${r.heard || '(nothing)'}”` : 'No Gnani key found: nothing was sent (the rows show what would be)', !!r.error); }
   finally { b.disabled = false; b.textContent = 'Test Gnani'; }
 };
-$('#trClear').onclick = () => { trRows = []; trOpenIds.clear(); drawTrace(); };
+$('#trClear').onclick = () => { trRows = []; trOpenIds.clear(); trClosedIds.clear(); drawTrace(); };
 $$('#trFilter button').forEach(b => b.onclick = () => { trKind = b.dataset.k; $$('#trFilter button').forEach(x => x.classList.toggle('on', x === b)); drawTrace(); });
 
 /* ================= start ================= */

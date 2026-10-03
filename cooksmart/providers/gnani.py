@@ -115,7 +115,11 @@ class GnaniSpeechProvider:
             except httpx.HTTPError as e:
                 trace.record("gnani", "Gnani STT (speech to text)", req, {"error": str(e)}, "error", t.ms)
                 raise SpeechError(f"could not reach Gnani STT: {e}") from e
-        trace.record("gnani", "Gnani STT (speech to text)", req, {"status": r.status_code, "body": (r.text or "")[:600]},
+        try:
+            _body = r.json()
+        except ValueError:
+            _body = (r.text or "")[:600]
+        trace.record("gnani", "Gnani STT (speech to text)", req, {"status": r.status_code, "body": _body},
                      "ok" if r.status_code < 400 else "error", t.ms)
         if r.status_code in (401, 403):
             raise SpeechError(f"Gnani rejected the API key (HTTP {r.status_code})")

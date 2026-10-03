@@ -82,7 +82,7 @@ def test_real_gnani_calls_show_request_and_response_but_never_the_key_or_raw_aud
     plat.trigger_call("bot1", "+919800000001", {"dishes_hi": "x"}, "ref-1")
     stt, tts, call = seen
     assert stt["label"] == "Gnani STT (speech to text)" and stt["request"]["audio_file"] == "<5000 bytes>"
-    assert "paneer khatam" in stt["response"]["body"]
+    assert stt["response"]["body"]["transcript"] == "paneer khatam"
     assert tts["request"]["body"]["text"] == "नमस्ते" and "bytes of audio" in tts["response"]["body"]
     assert call["request"]["body"]["clientReferenceId"] == "ref-1" and call["response"]["body"]["response"]["conversationId"] == "c1"
     blob = json.dumps(seen, ensure_ascii=False)
