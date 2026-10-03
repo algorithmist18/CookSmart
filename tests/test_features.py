@@ -445,11 +445,7 @@ def _say(c, *texts):
 
 
 def _texts(c):
-    return [m["text"] for m in c.get("/api/h/owner/messages").json() if not (m.get("payload") or {}).get("flow")]
-
-
-def _flows(c):
-    return [m["text"] for m in c.get("/api/h/owner/messages").json() if (m.get("payload") or {}).get("flow")]
+    return [m["text"] for m in c.get("/api/h/owner/messages").json()]
 
 
 def _plan(c):
@@ -658,3 +654,12 @@ def test_chat_handles_small_talk_and_meal_specific_skips_without_a_shrug():
     p = _plan(c)
     assert p["stage"] == "" and p["meals"]["dinner"] == [] and p["chosen"]
     assert "Dinner: skipped" in " ".join(_texts(c)[-3:])
+
+
+def test_the_chat_never_carries_a_day_flow_checklist():
+    c = _day_env()
+    c.post("/api/h/trigger/nightly_review")
+    _say(c, "1", "1", "1")
+    c.post("/api/h/trigger/morning")
+    assert not any("Today's flow" in m["text"] or (m.get("payload") or {}).get("flow") for m in c.get("/api/h/owner/messages").json())
+    assert "data-flow" not in open("cooksmart/static/index.html", encoding="utf-8").read()       # the day lives in the Today column only

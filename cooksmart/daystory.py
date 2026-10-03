@@ -19,30 +19,6 @@ STAGES = [  # key, clock, title
     ("breakfast", "8:00 AM", "Breakfast"), ("lunch", "1:00 PM", "Lunch"), ("dinner", "8:30 PM", "Dinner"),
     ("wrapup", "10:00 PM", "Wrap-up")]
 
-def flow_text(plan: dict | None, story: list[dict], names: dict[str, str]) -> str:
-    """The day as a checklist, for the owner chat: what's done, what's happening now, what's next."""
-    if not plan:
-        return ""
-    by = {e["stage"] for e in story}
-    last = max((i for i, (k, _, _) in enumerate(STAGES) if k in by), default=-1)
-    lines, now_set = ["📅 *Today's flow*"], False
-    for i, (k, clock, title) in enumerate(STAGES):
-        detail = names.get(k, "")
-        if k in by:
-            mark = "✅"
-        elif i < last:
-            mark = "➖"
-        elif not now_set:
-            mark, now_set = "👉", True
-            if k == "plan" and plan.get("stage"):
-                detail = f"choosing {plan['stage']}"
-        else:
-            mark = "⚪"
-        label = f"{mark} {clock} {title}" + (f": {detail}" if detail else "")
-        lines.append(f"*{label}*" if mark == "👉" else label)
-    return "\n".join(lines)
-
-
 # emoji + fridge zone; "full" is a full pack, used to draw how full each shelf item is
 ITEM_VIEW: dict[str, tuple[str, str]] = {
     "tomato": ("🍅", "veg"), "onion": ("🧅", "pantry"), "potato": ("🥔", "pantry"), "spinach": ("🥬", "veg"),

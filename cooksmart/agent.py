@@ -8,7 +8,6 @@ Plan states:  review -> (approval | held) -> ordered -> ready -> briefed -> clos
 from __future__ import annotations
 
 import datetime as dt
-import functools
 import random
 import re
 
@@ -79,23 +78,6 @@ def _flat(proposals: list[dict], picks: list[int]) -> list[str]:
     return out
 
 
-def _flows(fn):
-    """After an action, if the day moved on (a stage, a choice, an order, a meal), post the day's flow to the owner.
-    Only the outermost action posts, so one tap never produces two."""
-    @functools.wraps(fn)
-    def wrapper(self, hid, *a, **kw):
-        outer = self._flow_depth == 0
-        before = self._flow_sig(hid) if outer else None
-        self._flow_depth += 1
-        try:
-            return fn(self, hid, *a, **kw)
-        finally:
-            self._flow_depth -= 1
-            if outer and self._flow_sig(hid) != before:
-                self._flow(hid)
-    return wrapper
-
-
 class Agent:
     def __init__(self, db: DB, channel: MessageChannel, planner: Planner, nlu: NLU, speech: SpeechProvider,
                  grocery: GroceryProvider, dispatch: DispatchProvider, payment: PaymentProvider,
@@ -112,27 +94,8 @@ class Agent:
             raise KeyError(f"unknown household {hid}")
         return h
 
-    _flow_depth = 0
-
     def _say(self, hid: str, text: str, buttons: list[str] | None = None) -> None:
         self.channel.send_owner(hid, text, buttons)
-
-    def _flow_sig(self, hid: str):
-        plan = repo.latest_plan(self.db, hid)
-        if not plan:
-            return None
-        return (plan["id"], plan["state"], plan["stage"], str(plan["meals"]), tuple(plan["served"]),
-                len(repo.list_story(self.db, hid, plan["id"])), tuple(o["status"] for o in repo.list_orders(self.db, hid)))
-
-    def _flow(self, hid: str) -> None:
-        plan = repo.latest_plan(self.db, hid)
-        if not plan:
-            return
-        story = repo.list_story(self.db, hid, plan["id"])
-        meals = daystory.meals_of(plan)
-        names = {m: _names(meals[m]) for m in daystory.MEALS if meals.get(m)}
-        names.update({e["stage"]: e["text"].replace("\n", " · ") for e in story if e["stage"] in ("review", "shop", "delivery", "brief")})
-        self.channel.send_owner(hid, daystory.flow_text(plan, story, names), None, flow=True)
 
     def _cook_say(self, hid: str, msg) -> None:
         self.channel.send_cook(hid, msg)
@@ -211,7 +174,6 @@ class Agent:
         self._begin_stage(hid, plan["id"], "breakfast", preface)        # always step by step, never a whole-day list
 
     # ------------------------------------------------------------------ S1 + S2
-    @_flows
     def nightly_review(self, hid: str) -> dict:
         h = self._h(hid)
         today, day = h["sim_date"], _plus(h["sim_date"], 1)
@@ -324,7 +286,6 @@ class Agent:
             return "📦 In the fridge:\n" + "\n".join(f"• {l}" for l in stock) if stock else "📦 The fridge is empty. Say *fill the fridge*."
         return "I can tell you what's expiring, what's in the fridge, the menu, or your order. Try *what should I eat first?*"
 
-    @_flows
     def restock(self, hid: str) -> None:
         """Fill the fridge with a fresh basic stock (for the demo, or after a real shop)."""
         h = self._h(hid)
@@ -364,7 +325,6 @@ class Agent:
         self._send_proposals(hid, plan, preface)
 
     # ------------------------------------------------------------------ owner chat
-    @_flows
     def handle_owner(self, hid: str, text: str) -> None:
         h = self._h(hid)
         repo.add_message(self.db, hid, "owner", "user", text)
@@ -648,7 +608,6 @@ class Agent:
             return
         self._replan(hid, plan["id"], "Sure, here's another take 👇")
 
-    @_flows
     def cutoff(self, hid: str) -> None:
         """S3/S5 timeout. Silence never places an order."""
         plan = repo.latest_plan(self.db, hid)
@@ -825,7 +784,6 @@ class Agent:
         self._say(hid, f"✅ *Ordered* from {offer['store']} · ₹{offer['total']:.0f} · ETA {offer['eta_minutes']} min.\n"
                        f"{how}. I'll recheck it before the cook arrives.{late}")
 
-    @_flows
     def check_orders(self, hid: str) -> list[str]:
         """Re-verify accepted orders (cancellation after acceptance). Returns events."""
         events = []
@@ -858,7 +816,6 @@ class Agent:
                 msg = cookmsgs.concat(msg, cookmsgs.render("brief_prep", lang))
         return cookmsgs.concat(msg, cookmsgs.render("brief_end", lang))
 
-    @_flows
     def morning_handoff(self, hid: str) -> dict | None:
         plan = repo.latest_plan(self.db, hid)
         if not plan or plan["state"] == "closed":
@@ -922,7 +879,6 @@ class Agent:
         return start, wait
 
     # ------------------------------------------------------------------ delivery + door handshake
-    @_flows
     def rider_arrives(self, hid: str, voice_sample: str) -> dict:
         h = self._h(hid)
         order = next((o for o in reversed(repo.list_orders(self.db, hid)) if o["status"] == "accepted"), None)
@@ -944,7 +900,6 @@ class Agent:
                        "Share it only if this is your delivery.")
         return {"released": False, "otp_required": True}
 
-    @_flows
     def door_otp(self, hid: str, code: str) -> dict:
         order = next((o for o in reversed(repo.list_orders(self.db, hid)) if o["status"] == "accepted"), None)
         if not order or not order["otp"]:
@@ -976,14 +931,12 @@ class Agent:
             repo.update_plan(self.db, hid, plan["id"], state="ready")
 
     # ------------------------------------------------------------------ cook chat
-    @_flows
     def handle_cook(self, hid: str, text: str, voice: bool = True) -> None:
         """Typed text from the cook (optionally flagged as a voice note in the simulator)."""
         lang = self._h(hid)["cook_language"]
         tr = self.speech.transcribe(text, lang) if voice else Transcript(text, 1.0, lang, "text")
         self._cook_turn(hid, tr, shown=text, voice=voice)
 
-    @_flows
     def handle_cook_audio(self, hid: str, audio: bytes, mime: str = "audio/wav", hint: str | None = None) -> None:
         """A real recorded voice note: transcribed by the speech provider, then handled like any message."""
         lang = self._h(hid)["cook_language"]
@@ -1133,7 +1086,6 @@ class Agent:
         self._say(hid, f"🔁 {reason} problem. Switched to *{_names(new)}*.")
 
     # ------------------------------------------------------------------ S8
-    @_flows
     def end_of_day(self, hid: str) -> None:
         plan = repo.latest_plan(self.db, hid)
         if not plan or plan["state"] not in ("briefed", "ready", "ordered"):
@@ -1145,7 +1097,6 @@ class Agent:
         self._cook_say(hid, cookmsgs.render("eod", h["cook_language"]))
         self._say(hid, "🌙 Asked the cook what was used.")
 
-    @_flows
     def serve_meal(self, hid: str, meal: str) -> dict | None:
         """A meal is served: record it and what it used. Stock is reconciled once, at close of day."""
         plan = repo.latest_plan(self.db, hid)
@@ -1160,7 +1111,6 @@ class Agent:
         repo.audit(self.db, hid, "meal_served", plan=plan["id"], meal=meal, dishes=ids)
         return plan
 
-    @_flows
     def close_day(self, hid: str) -> dict | None:
         plan = repo.latest_plan(self.db, hid)
         if not plan or plan["state"] == "closed":
