@@ -206,7 +206,7 @@ def _dinner_candidates(ctx: PlanContext, used: set[str], left: dict, lunch: list
     for rid, r in RECIPES.items():
         if r["course"] not in _mainable(ctx) - {"breakfast"} or rid in used or rid == lunch_main or not allowed(rid, ctx2):
             continue
-        ids = _build_menu(rid, ctx2)
+        ids = _build_menu(rid, ctx2, max_gaps)
         if not ids or any(i in used for i in ids) or not _fits(ids, ctx2, left, max_gaps):
             continue
         rep = _repeat_days(rid, ctx)
@@ -284,14 +284,18 @@ def _left_after(ctx: PlanContext, taken: list[str]) -> PlanContext:
 
 def breakfast_options(ctx: PlanContext, taken: list[str], n: int = 3) -> list[Proposal]:
     ctx2, used, cands = _left_after(ctx, taken), set(taken), []
-    for rid, r in RECIPES.items():
-        if r["course"] != "breakfast" or rid in used or rid in ctx.exclude_ids or not allowed(rid, ctx2):
-            continue
-        n_gaps = _n_gaps([rid], ctx2, ctx2.stock)
-        if n_gaps > 2:
-            continue
-        rep = _repeat_days(rid, ctx)
-        cands.append(((n_gaps, -_urgency_of([rid], ctx2), 1 if rep is not None and rep <= 3 else 0, r["prep"], rid), rid))
+    for max_gaps in (2, 4, 99):                 # prefer what's nearly makeable, but never leave the owner without a list
+        cands = []
+        for rid, r in RECIPES.items():
+            if r["course"] != "breakfast" or rid in used or rid in ctx.exclude_ids or not allowed(rid, ctx2):
+                continue
+            n_gaps = _n_gaps([rid], ctx2, ctx2.stock)
+            if n_gaps > max_gaps:
+                continue
+            rep = _repeat_days(rid, ctx)
+            cands.append(((n_gaps, -_urgency_of([rid], ctx2), 1 if rep is not None and rep <= 3 else 0, r["prep"], rid), rid))
+        if len(cands) >= n:
+            break
     picks = [enrich([rid], ctx2) for _, rid in sorted(cands)[:n]]
     return label_options(picks, ctx2) if picks else []
 
@@ -299,13 +303,17 @@ def breakfast_options(ctx: PlanContext, taken: list[str], n: int = 3) -> list[Pr
 def dinner_options(ctx: PlanContext, taken: list[str], lunch: list[str], n: int = 3) -> list[Proposal]:
     ctx2 = _left_after(ctx, taken)
     picks, mains = [], set()
-    for _, ids in _dinner_candidates(ctx, set(taken), ctx2.stock, lunch or taken[:1] or ["roti"], max_gaps=2):
-        if ids[0] in mains:
-            continue
-        mains.add(ids[0])
-        picks.append(enrich(ids, ctx2))
+    for max_gaps in (2, 99):
+        for _, ids in _dinner_candidates(ctx, set(taken), ctx2.stock, lunch or taken[:1] or ["roti"], max_gaps=max_gaps):
+            if ids[0] in mains:
+                continue
+            mains.add(ids[0])
+            picks.append(enrich(ids, ctx2))
+            if len(picks) == n:
+                break
         if len(picks) == n:
             break
+    picks = sorted(picks, key=lambda p: len(p.gaps))
     return label_options(picks, ctx2) if picks else []
 
 
@@ -341,9 +349,9 @@ def _urgency_of(ids: list[str], ctx: PlanContext, skip: set[str] = frozenset()) 
                if i in ctx.stock and i not in skip and ctx.stock[i]["qty"] >= n["qty"])
 
 
-def _build_menu(main: str, ctx: PlanContext) -> list[str] | None:
+def _build_menu(main: str, ctx: PlanContext, max_gaps: int = 2) -> list[str] | None:
     gaps = inv.gaps(_needs([main], ctx), ctx.stock)
-    if len(gaps) > 2:
+    if len(gaps) > max_gaps:
         return None
     ids = [main]
     # remaining stock after the main, so companions must be fully makeable from what is left
@@ -377,25 +385,29 @@ def heuristic_propose(ctx: PlanContext, n: int = 3, day: bool = True) -> Proposa
     avoid = {m["note"] for m in ctx.memory if m["kind"] == "avoid_dish"}
     recent_quick = any(m["kind"] == "constraint" and "time" in m["note"] for m in ctx.memory)
     mainable = _mainable(ctx)
-    cands = []
-    for rid, r in RECIPES.items():
-        if r["course"] not in mainable or rid in ctx.exclude_ids or not allowed(rid, ctx):
-            continue
-        ids = _build_menu(rid, ctx)
-        if not ids:
-            continue
-        gaps = inv.gaps(_needs(ids, ctx), ctx.stock)
-        uses = {i: _urgency_weight(ctx.stock[i]["days_left"]) for i, nd in _needs(ids, ctx).items()
-                if i in ctx.stock and ctx.stock[i]["qty"] >= nd["qty"]}
-        rep = _repeat_days(rid, ctx)
-        fixed = -len(gaps) * 5
-        fixed -= 4 if rep is not None and rep <= 3 else 2 if rep is not None and rep <= 7 else 0
-        fixed += 1 if likes & set(r["needs"]) else 0
-        fixed += 1 if recent_quick and r["prep"] <= 30 else 0
-        fixed += 2 if ctx.light and "light" in r["tags"] else 0
-        fixed -= 6 if rid in avoid else 0
-        fixed += 0.3 * (len(ids) - 1)          # a fuller meal beats a lone dish, all else equal
-        cands.append((ids, not gaps, uses, fixed))
+    def candidates(max_gaps: int) -> list:
+        out = []
+        for rid, r in RECIPES.items():
+            if r["course"] not in mainable or rid in ctx.exclude_ids or not allowed(rid, ctx):
+                continue
+            ids = _build_menu(rid, ctx, max_gaps)
+            if not ids:
+                continue
+            gaps = inv.gaps(_needs(ids, ctx), ctx.stock)
+            uses = {i: _urgency_weight(ctx.stock[i]["days_left"]) for i, nd in _needs(ids, ctx).items()
+                    if i in ctx.stock and ctx.stock[i]["qty"] >= nd["qty"]}
+            rep = _repeat_days(rid, ctx)
+            fixed = -len(gaps) * 5
+            fixed -= 4 if rep is not None and rep <= 3 else 2 if rep is not None and rep <= 7 else 0
+            fixed += 1 if likes & set(r["needs"]) else 0
+            fixed += 1 if recent_quick and r["prep"] <= 30 else 0
+            fixed += 2 if ctx.light and "light" in r["tags"] else 0
+            fixed -= 6 if rid in avoid else 0
+            fixed += 0.3 * (len(ids) - 1)          # a fuller meal beats a lone dish, all else equal
+            out.append((ids, not gaps, uses, fixed))
+        return out
+
+    cands = candidates(2) or candidates(99)         # never leave the owner without a list: a bigger shop beats nothing
 
     picked: list[list[str]] = []
     covered: set[str] = set()

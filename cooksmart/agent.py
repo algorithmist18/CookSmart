@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import functools
 import random
+import re
 
 from . import callresult, cookbrief, cookmsgs, guards, repo
 from . import inventory as inv
@@ -248,6 +249,85 @@ class Agent:
         plan = repo.get_plan(self.db, hid, plan["id"])
         return plan
 
+    # ------------------------------------------------------------------ understanding the owner
+    def _owner_ctx(self, hid: str) -> dict:
+        """What the chat is about right now, so "the second one" or "yes" can be read in context."""
+        plan = repo.latest_plan(self.db, hid)
+        if not plan:
+            return {}
+        ctx = {"state": plan["state"], "stage": plan["stage"], "meals": {m: [RECIPES[r]["name"] for r in v] for m, v in plan["meals"].items()},
+               "options": [{"n": n, "label": p.get("label", ""), "dishes": [RECIPES[r]["name"] for r in p["recipe_ids"]], "buy": [g["name"] for g in p["gaps"]]}
+                           for n, p in enumerate(plan["proposals"], 1)]}
+        if plan["state"] in ("approval", "held") and plan["offer"]:
+            ctx["order"] = f"{plan['offer']['store']}, ₹{plan['offer']['total']:.0f}"
+        return ctx
+
+    def _facts(self, hid: str) -> str:
+        h, plan = self._h(hid), repo.latest_plan(self.db, hid)
+        day = plan["day"] if plan else h["sim_date"]
+        lines = ["Kitchen stock (name: quantity, eat within):"]
+        for i in inv.list_items(self.db, hid):
+            if i["qty"] > 0:
+                left = inv.days_left(i, day)
+                when = "" if left is None else (", spoiled" if inv.is_spoiled(i, day) else f", eat within {max(0, left + (dt.date.fromisoformat(day) - dt.date.fromisoformat(h['sim_date'])).days)} day(s)")
+                lines.append(f"- {i['name']}: {fmt_qty(i['qty'], i['unit'])}{when}")
+        if plan:
+            m = daystory.meals_of(plan)
+            lines.append("Menu so far: " + ("; ".join(f"{k}: {_names(v)}" for k, v in m.items() if v) or "nothing chosen yet"))
+            if plan["stage"]:
+                lines.append(f"Currently choosing: {plan['stage']}")
+                for n, p in enumerate(plan["proposals"], 1):
+                    lines.append(f"- option {n} ({p.get('label')}): {_names(p['recipe_ids'])}. {p['reason']} "
+                                 + ("To buy: " + ", ".join(g["name"] for g in p["gaps"]) if p["gaps"] else "Nothing to buy"))
+            lines.append(f"Plan state: {plan['state']}")
+        for o in repo.list_orders(self.db, hid)[-2:]:
+            lines.append(f"Order #{o['id']} from {o['store']}: {o['status']}, ETA {o['eta_minutes']} min, ₹{o['total']:.0f}")
+        prefs = h["preferences"]
+        lines.append(f"Diet: {prefs.get('diet', 'vegetarian')}; family size {h['family_size']}")
+        allergies = sorted({a for m in prof.members(prefs) for a in m.get("allergies", [])})
+        if allergies:
+            lines.append("Allergies in the family: " + ", ".join(allergies))
+        return "\n".join(lines)
+
+    def _answer(self, hid: str, question: str) -> None:
+        """Questions about the kitchen: Claude answers from the facts if available, otherwise simple rules do."""
+        facts = self._facts(hid)
+        text = self.nlu.answer(question, facts) or self._rule_answer(hid, question, facts)
+        self._say(hid, text)
+
+    def _rule_answer(self, hid: str, question: str, facts: str) -> str:
+        from .nlu import find_items, tokens
+        toks = set(tokens(question))
+        stock = [l[2:] for l in facts.splitlines() if l.startswith("- ") and ": " in l and "option" not in l and "Order" not in l]
+        def days_of(line: str) -> int:
+            m = re.search(r"eat within (\d+)", line)
+            return int(m.group(1)) if m else 99
+        soon = sorted((l for l in stock if days_of(l) <= 3), key=days_of)
+        asked_items = find_items(tokens(question))
+        if asked_items:
+            hits = [l for l in stock if l.split(":")[0] in asked_items]
+            return ("📦 " + "\n📦 ".join(hits)) if hits else f"🤷 No {', '.join(asked_items)} in the fridge right now."
+        if toks & {"expiring", "expire", "spoil", "spoiling", "going", "kharab", "fresh", "old", "first", "soon", "eat"}:
+            return ("🧊 Eat soon:\n" + "\n".join(f"• {l}" for l in soon)) if soon else "🧊 Nothing is close to expiring."
+        if toks & {"order", "delivery", "deliver", "groceries", "payment", "paid", "arrive", "aayega"}:
+            o = [l for l in facts.splitlines() if l.startswith("Order")]
+            return "🛒 " + o[-1] if o else "🛒 No order yet."
+        if toks & {"menu", "plan", "planned", "cooking", "today", "tomorrow", "eat", "khana", "dinner", "lunch", "breakfast"}:
+            m = next((l for l in facts.splitlines() if l.startswith("Menu so far")), "Nothing chosen yet")
+            return "🍽️ " + m.replace("Menu so far: ", "")
+        if toks & {"fridge", "stock", "have", "left", "bacha", "kitchen", "pantry"}:
+            return "📦 In the fridge:\n" + "\n".join(f"• {l}" for l in stock) if stock else "📦 The fridge is empty. Say *fill the fridge*."
+        return "I can tell you what's expiring, what's in the fridge, the menu, or your order. Try *what should I eat first?*"
+
+    @_flows
+    def restock(self, hid: str) -> None:
+        """Fill the fridge with a fresh basic stock (for the demo, or after a real shop)."""
+        h = self._h(hid)
+        inv.seed(self.db, hid, h["sim_date"], inv.DEFAULT_STOCK)
+        repo.audit(self.db, hid, "restock")
+        self._say(hid, "🧺 Filled the fridge: tomato, spinach, paneer, onion, potato, dal, rice, atta, curd, peas and more. All fresh today.")
+        self._after_stock_change(hid)
+
     def _stage_taken(self, plan: dict, stage: str) -> list[str]:
         return [d for m in daystory.MEALS if m != stage for d in plan["meals"].get(m, [])]
 
@@ -264,7 +344,7 @@ class Agent:
                    else "I can't make any from stock I'm sure of.")
             return self._say(hid, (preface + "\n\n" if preface else "") +
                              f"{daystory.ICON[stage]} *What do you want for {stage}?*\n{why} Name a dish and I'll order what's missing, "
-                             f"or reply *skip*.", [f"Skip {stage}"])
+                             f"or reply *skip*. Or say *fill the fridge*.", [f"Skip {stage}", "Fill the fridge"])
         self._send_proposals(hid, plan, preface)
 
     def _replan(self, hid: str, plan_id: int, preface: str = "") -> None:
@@ -283,7 +363,7 @@ class Agent:
     def handle_owner(self, hid: str, text: str) -> None:
         h = self._h(hid)
         repo.add_message(self.db, hid, "owner", "user", text)
-        a = self.nlu.owner(text)
+        a = self.nlu.owner(text, self._owner_ctx(hid))
         act = a["action"]
         plan = repo.latest_plan(self.db, hid)
 
@@ -303,6 +383,10 @@ class Agent:
             return self._owner_profile(hid, a)
         if act == "redo":
             return self._redo(hid)
+        if act == "restock":
+            return self.restock(hid)
+        if act == "ask":
+            return self._answer(hid, a.get("text") or text)
         if act == "confirm_all":
             inv.confirm_all(self.db, hid, h["sim_date"])
             repo.audit(self.db, hid, "stock_confirmed_all")

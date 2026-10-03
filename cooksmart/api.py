@@ -539,6 +539,12 @@ def create_app(settings: Settings | None = None, db: DB | None = None, platform:
         return {"ok": True}
 
     # ---- door
+    @app.post("/api/{hid}/restock")
+    def restock(hid: str):
+        need(hid)
+        agent.restock(hid)
+        return {"ok": True}
+
     @app.post("/api/{hid}/door/arrive")
     def door_arrive(hid: str, body: DoorBody):
         need(hid)

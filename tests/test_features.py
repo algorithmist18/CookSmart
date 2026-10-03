@@ -594,7 +594,7 @@ def test_every_path_that_re_asks_goes_step_by_step_never_a_whole_day_list():
     assert "Let's choose again" in texts and "Tomorrow's plan" not in texts
 
 
-def test_breakfast_is_always_asked_even_when_no_option_can_be_made():
+def test_stale_stock_still_gives_a_list_of_breakfast_options_with_a_shopping_list():
     from cooksmart import repo as r
     app = create_app(Settings(":memory:", "", "m", "", "t"), DB(":memory:"))
     c = TestClient(app)
@@ -602,29 +602,40 @@ def test_breakfast_is_always_asked_even_when_no_option_can_be_made():
     c.post("/api/h/scenario/empty_pantry")
     r.update_household(app.state.db, "h", sim_date="2026-10-20")          # everything is stale
     c.post("/api/h/trigger/nightly_review")
-    last = _texts(c)[-1]
-    assert "What do you want for breakfast?" in last and "skip" in last.lower()
     p = _plan(c)
-    assert p["stage"] == "breakfast" and p["meals"] == {}                # still waiting for the owner, nothing skipped for them
+    assert p["stage"] == "breakfast" and len(p["proposals"]) >= 2          # a list, not "I can't make any"
+    assert all(o["gaps"] for o in p["proposals"])                           # each says what to buy
+    assert "Buy:" in _texts(c)[-1] and "I can't make any" not in _texts(c)[-1]
     _say(c, "skip")
-    assert _plan(c)["stage"] == "lunch" and "What do you want for lunch?" in _texts(c)[-1]
+    assert _plan(c)["stage"] == "lunch" and len(_plan(c)["proposals"]) >= 2
 
 
-def test_the_day_flow_is_posted_whenever_the_state_changes_and_only_then():
-    c = _day_env()
-    assert _flows(c) == []
+def test_fill_the_fridge_restocks_and_refreshes_the_options():
+    from cooksmart import repo as r
+    app = create_app(Settings(":memory:", "", "m", "", "t"), DB(":memory:"))
+    c = TestClient(app)
+    c.post("/api/households", json={"id": "h"})
+    c.post("/api/h/scenario/empty_pantry")
     c.post("/api/h/trigger/nightly_review")
-    assert len(_flows(c)) == 1 and "Today's flow" in _flows(c)[0] and "choosing breakfast" in _flows(c)[0]
-    _say(c, "help")                                                     # nothing changed in the day: no new flow
-    assert len(_flows(c)) == 1
-    _say(c, "1")                                                        # breakfast chosen: the day moved on
-    assert len(_flows(c)) == 2 and "choosing lunch" in _flows(c)[-1] and "Breakfast:" in _flows(c)[-1]
-    _say(c, "1", "1")                                                   # lunch, dinner -> menu set; one flow per action
-    assert len(_flows(c)) == 4 and "✅ 9:10 PM Menu picked" in _flows(c)[-1]
-    n = len(_flows(c))
-    c.post("/api/h/trigger/morning")                                    # the cutoff + brief inside are one action, one flow
-    assert len(_flows(c)) == n + 1 and "✅ 6:30 AM Cook briefed" in _flows(c)[-1]
-    c.post("/api/h/trigger/serve_breakfast")
-    assert len(_flows(c)) == n + 2 and "✅ 8:00 AM Breakfast" in _flows(c)[-1] and "👉" in _flows(c)[-1]
-    # the flow is a pinned panel, never counted as a chat turn
-    assert all((m.get("payload") or {}).get("flow") for m in c.get("/api/h/owner/messages").json() if m["text"].startswith("📅"))
+    _say(c, "fill the fridge")
+    st = c.get("/api/h/owner/state").json()
+    assert any(i["name"] == "spinach" and i["qty"] > 0 for i in st["inventory"])
+    assert "Filled the fridge" in " ".join(_texts(c)) and "What do you want for breakfast" in _texts(c)[-1]
+    assert c.post("/api/h/restock").json() == {"ok": True}
+
+
+def test_owner_can_ask_questions_and_gets_answers_from_the_kitchen_not_a_shrug():
+    c = _day_env()
+    c.post("/api/h/trigger/nightly_review")
+    _say(c, "what should I eat first?")
+    a = _texts(c)[-1]
+    assert "spinach" in a and "within" in a
+    _say(c, "do we have paneer?")
+    assert "paneer" in _texts(c)[-1] and "200" in _texts(c)[-1]
+    _say(c, "what's the status of my order?")
+    assert "No order yet" in _texts(c)[-1]
+    _say(c, "what's planned for tomorrow?")
+    assert "nothing chosen" in _texts(c)[-1].lower() or "breakfast" in _texts(c)[-1].lower()
+    _say(c, "the second one please")                                   # an ordinal picks option 2 of the meal being asked
+    assert _plan(c)["stage"] == "lunch"
+

@@ -216,7 +216,7 @@
   <!-- ======================= SIMULATOR ======================= -->
   <section id="view-sim">
     <div>
-      <div class="sect">Pantry</div>
+      <div class="sect row" style="justify-content:space-between">Pantry <button class="link" id="restockBtn" title="Fill the fridge with a fresh basic stock">🧺 Fill</button></div>
       <div class="pantry" id="pantry"></div>
     </div>
     <div class="fridge">
@@ -422,7 +422,7 @@ $$('#tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 $$('[data-goto]').forEach(b => b.onclick = () => showTab(b.dataset.goto));
 
 /* ================= phones ================= */
-const ownerChips = ['1', 'skip', 'approve', 'help', '1 and 2', 'Something else', 'palak paneer', 'cream 100 ml', '6 guests tomorrow', 'fasting tomorrow', 'no dairy',
+const ownerChips = ['1', 'skip', 'approve', 'fill the fridge', 'what should I eat first?', 'help', '1 and 2', 'Something else', 'palak paneer', 'cream 100 ml', '6 guests tomorrow', 'fasting tomorrow', 'no dairy',
   'Aarav is allergic to peanuts', 'tell cook: kam mirch daliye', 'change menu', 'call the cook', 'mode auto'];
 const cookChips = ['नमस्ते', 'नमस्ते, मैं आ गई', 'आज क्या बनाना है?', 'हाँ', 'नहीं', 'पनीर खत्म', 'गैस खराब है', 'पालक खराब हो गई', 'खाना बन गया', 'कल मैं नहीं आऊंगी', 'समय कम है'];
 
@@ -821,6 +821,7 @@ function renderDay(s) {
 $$('#who button').forEach(b => b.onclick = () => { $$('#who button').forEach(x => x.classList.toggle('on', x === b)); $('#ph-owner').hidden = b.dataset.w !== 'owner'; $('#ph-cook').hidden = b.dataset.w !== 'cook'; });
 const clearChats = () => { Object.values(phones).forEach(p => p.clear()); queue.length = 0; };
 $('#clearBtn').onclick = clearChats;
+$('#restockBtn').onclick = async () => { await api(HID + '/restock', {}); refresh(); };
 $('#gearBtn').onclick = e => { e.stopPropagation(); $('#gear').hidden = !$('#gear').hidden; };
 $('#gear').onclick = e => e.stopPropagation(); document.addEventListener('click', () => $('#gear').hidden = true);
 setInterval(() => { $('#clock').textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }, 1000);
