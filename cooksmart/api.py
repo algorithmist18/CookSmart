@@ -539,6 +539,20 @@ def create_app(settings: Settings | None = None, db: DB | None = None, platform:
         return {"ok": True}
 
     # ---- door
+    @app.post("/api/{hid}/reset")
+    def reset(hid: str):
+        """A fresh start: today's date, a freshly stocked fridge, no plan, orders or chat. The household's profile and
+        Agent Studio edits are kept."""
+        h = need(hid)
+        repo.wipe_household_data(db, hid)
+        prefs = {k: v for k, v in h["preferences"].items() if k != "next"}
+        today = dt.date.today().isoformat()
+        repo.update_household(db, hid, sim_date=today, preferences=prefs)
+        inv.seed(db, hid, today, inv.DEFAULT_STOCK)
+        controls.reset()
+        current.pop(hid, None)
+        return {"ok": True}
+
     @app.post("/api/{hid}/restock")
     def restock(hid: str):
         need(hid)

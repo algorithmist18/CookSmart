@@ -663,3 +663,27 @@ def test_the_chat_never_carries_a_day_flow_checklist():
     c.post("/api/h/trigger/morning")
     assert not any("Today's flow" in m["text"] or (m.get("payload") or {}).get("flow") for m in c.get("/api/h/owner/messages").json())
     assert "data-flow" not in open("cooksmart/static/index.html", encoding="utf-8").read()       # the day lives in the Today column only
+
+
+def test_a_fresh_load_resets_the_day_so_the_first_question_is_breakfast():
+    c = _day_env()
+    c.post("/api/h/trigger/nightly_review")
+    _say(c, "1", "1")                                                        # mid-way: dinner is next
+    assert _plan(c)["stage"] == "dinner"
+    assert c.post("/api/h/reset").json() == {"ok": True}                     # what the page does on every load
+    st = c.get("/api/h/owner/state").json()
+    assert st["plan"] is None and st["orders"] == [] and c.get("/api/h/owner/messages").json() == []
+    assert any(i["name"] == "spinach" and i["qty"] > 0 for i in st["inventory"])       # the fridge is stocked again
+    c.post("/api/h/trigger/nightly_review")
+    p = _plan(c)
+    assert p["stage"] == "breakfast" and "What do you want for breakfast?" in _texts(c)[-1]
+
+
+def test_reset_keeps_the_household_profile_and_other_households_untouched():
+    c = _day_env()
+    c.post("/api/households", json={"id": "other"})
+    c.post("/api/h/owner/message", json={"text": "Aarav is allergic to peanuts"})
+    c.post("/api/h/reset")
+    prefs = c.get("/api/h/owner/state").json()["household"]["preferences"]
+    assert any("peanut" in m.get("allergies", []) for m in prefs.get("members", []))
+    assert c.get("/api/other/owner/state").status_code == 200

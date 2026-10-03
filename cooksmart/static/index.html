@@ -824,7 +824,8 @@ setInterval(() => { $('#clock').textContent = new Date().toLocaleTimeString([], 
 
 /* ================= start ================= */
 (async function init() {
-  await api('households', { id: HID }); scenarios = await api('scenarios'); buildScenarios();
+  await api('households', { id: HID }); await api(HID + '/reset', {});          // every load starts fresh: the first question is breakfast
+  scenarios = await api('scenarios'); buildScenarios();
   showTab(location.hash.slice(1) || 'sim'); await refresh(); setInterval(refresh, 1500);
 })();
 </script>
