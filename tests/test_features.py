@@ -457,7 +457,7 @@ def test_options_come_one_meal_at_a_time_breakfast_then_lunch_then_dinner():
     c = _day_env()
     c.post("/api/h/trigger/nightly_review")
     first = _texts(c)[0]
-    assert "Breakfast options" in first and "Lunch options" not in first and "Dinner options" not in first
+    assert "What do you want for breakfast" in first and "What do you want for lunch" not in first and "What do you want for dinner" not in first
     p = _plan(c)
     assert p["stage"] == "breakfast" and p["proposals"]
     assert all(RECIPES[r]["course"] == "breakfast" for o in p["proposals"] for r in o["recipe_ids"])
@@ -465,13 +465,13 @@ def test_options_come_one_meal_at_a_time_breakfast_then_lunch_then_dinner():
     _say(c, "1")                                                        # pick breakfast
     p = _plan(c)
     assert p["stage"] == "lunch" and p["meals"]["breakfast"] == chosen_bf
-    assert "Lunch options" in _texts(c)[-1] and "✅" in _texts(c)[-1] and "Breakfast" in _texts(c)[-1]
+    assert "What do you want for lunch" in _texts(c)[-1] and "✅" in _texts(c)[-1] and "Breakfast" in _texts(c)[-1]
     assert not any(RECIPES[r]["course"] == "breakfast" for o in p["proposals"] for r in o["recipe_ids"])
     lunch = p["proposals"][1]["recipe_ids"]
     _say(c, "2")                                                        # pick lunch option 2
     p = _plan(c)
     assert p["stage"] == "dinner" and p["meals"]["lunch"] == lunch
-    assert "Dinner options" in _texts(c)[-1]
+    assert "What do you want for dinner" in _texts(c)[-1]
     assert all(not set(o["recipe_ids"]) & (set(chosen_bf) | set(lunch)) for o in p["proposals"])
     _say(c, "1")                                                        # pick dinner
     p = _plan(c)
@@ -501,7 +501,7 @@ def test_naming_several_meals_at_once_jumps_ahead():
     _say(c, "breakfast upma, lunch dal tadka")
     p = _plan(c)
     assert p["meals"]["breakfast"] == ["upma"] and p["meals"]["lunch"] == ["dal_tadka"] and p["stage"] == "dinner"
-    assert "Dinner options" in _texts(c)[-1]
+    assert "What do you want for dinner" in _texts(c)[-1]
     _say(c, "dinner aloo gobi")
     assert _plan(c)["meals"]["dinner"] == ["aloo_gobi"] and _plan(c)["stage"] == ""
 
@@ -569,7 +569,7 @@ def test_stale_stock_still_gets_options_with_a_small_shop_for_each_meal():
     c.post("/api/h/trigger/nightly_review")
     first = _texts(c)[0]
     assert "Probably gone off by tomorrow" in first and "Not sure if you still have" in first
-    assert "Breakfast options" in first and first.count("🛒") >= 1
+    assert "What do you want for breakfast" in first and first.count("🛒") >= 1
 
 
 def test_every_path_that_re_asks_goes_step_by_step_never_a_whole_day_list():
@@ -578,13 +578,29 @@ def test_every_path_that_re_asks_goes_step_by_step_never_a_whole_day_list():
     _say(c, "1", "1", "1")                                              # a finished menu
     _say(c, "change menu")
     last = _texts(c)[-1]
-    assert "Breakfast options" in last and "Lunch options" not in last and "Tomorrow's plan" not in last
+    assert "What do you want for breakfast" in last and "What do you want for lunch" not in last and "Tomorrow's plan" not in last
     _say(c, "something else")
     last = _texts(c)[-1]
-    assert "Breakfast options" in last and "Tomorrow's plan" not in last
+    assert "What do you want for breakfast" in last and "Tomorrow's plan" not in last
     c2 = _day_env()
     c2.post("/api/mock/controls", json={"out_of_stock": ["cauliflower"]})
     c2.post("/api/h/trigger/nightly_review")
     _say(c2, "aloo gobi", "skip", "skip")                               # needs cauliflower, which no shop has
     texts = " ".join(_texts(c2))
     assert "Let's choose again" in texts and "Tomorrow's plan" not in texts
+
+
+def test_breakfast_is_always_asked_even_when_no_option_can_be_made():
+    from cooksmart import repo as r
+    app = create_app(Settings(":memory:", "", "m", "", "t"), DB(":memory:"))
+    c = TestClient(app)
+    c.post("/api/households", json={"id": "h"})
+    c.post("/api/h/scenario/empty_pantry")
+    r.update_household(app.state.db, "h", sim_date="2026-10-20")          # everything is stale
+    c.post("/api/h/trigger/nightly_review")
+    last = _texts(c)[-1]
+    assert "What do you want for breakfast?" in last and "skip" in last.lower()
+    p = _plan(c)
+    assert p["stage"] == "breakfast" and p["meals"] == {}                # still waiting for the owner, nothing skipped for them
+    _say(c, "skip")
+    assert _plan(c)["stage"] == "lunch" and "What do you want for lunch?" in _texts(c)[-1]

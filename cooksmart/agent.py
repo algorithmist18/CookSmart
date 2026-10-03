@@ -160,7 +160,7 @@ class Agent:
         h = self._h(hid)
         if plan["stage"]:
             stage = plan["stage"]
-            text = (head + f"{daystory.ICON[stage]} *{stage.title()} options. Pick one:*\n\n" +
+            text = (head + f"{daystory.ICON[stage]} *What do you want for {stage}?* Pick one:\n\n" +
                     self._fmt_stage_props(props, stage, inv.available(self.db, hid, h["sim_date"], plan["day"]), self._scale(plan)))
             text += (f"\n\n👉 Tap an option, or reply *1*, *2*, *3*. Or name your own dish. *skip* = no {stage}.")
             buttons = [f"Accept {n}" for n in range(1, len(props) + 1)] + [f"Skip {stage}", "Something else"]
@@ -221,11 +221,12 @@ class Agent:
         plan = repo.update_plan(self.db, hid, plan_id, proposals=[p.as_dict() for p in opts], stage=stage,
                                 notes=[], state="review")
         repo.audit(self.db, hid, "stage_options", plan=plan_id, stage=stage, options=[p.recipe_ids for p in opts])
-        if not opts and (plan["excluded"] or plan["feedback"]):        # the owner turned everything down
-            return self._say(hid, (preface + "\n" if preface else "") +
-                             f"🙏 That's all I have for {stage} from what's at home. Name a dish, or reply *skip*.")
-        if not opts:                                                   # nothing suitable: say so and move on
-            return self._pick_for_stage(hid, plan, [], preface=preface, auto=True)
+        if not opts:                                                   # still ask: never skip a meal on the owner's behalf
+            why = ("That's all I have for it from what's at home." if plan["excluded"] or plan["feedback"]
+                   else "I can't make any from stock I'm sure of.")
+            return self._say(hid, (preface + "\n\n" if preface else "") +
+                             f"{daystory.ICON[stage]} *What do you want for {stage}?*\n{why} Name a dish and I'll order what's missing, "
+                             f"or reply *skip*.", [f"Skip {stage}"])
         self._send_proposals(hid, plan, preface)
 
     def _replan(self, hid: str, plan_id: int, preface: str = "") -> None:

@@ -248,17 +248,20 @@ def say_and_settle(agent, db: DB, hid: str, text: str) -> None:
     so after it the remaining meals are skipped (a named dish) or take option 1 (a number)."""
     from .nlu import parse_owner
     key = lambda: (lambda p: (p["stage"], str(p["meals"])) if p else None)(repo.latest_plan(db, hid))   # noqa: E731
+    act = parse_owner(text)["action"]
+    pick = act in ("choose", "yes")
+    plan0 = repo.latest_plan(db, hid)
+    if pick and plan0 and plan0["stage"] and not plan0["proposals"]:      # nothing to pick from: the shorthand means skip
+        text = "skip"
     before = key()
     agent.handle_owner(hid, text)
-    act = parse_owner(text)["action"]
-    reply = "skip" if act in ("dish_request", "meal_request") else "1" if act in ("choose", "yes") else None
-    if not reply or key() == before:
+    if not (pick or act in ("dish_request", "meal_request")) or key() == before:
         return
     for _ in range(4):
         plan = repo.latest_plan(db, hid)
         if not plan or plan["state"] != "review" or not plan["stage"]:
             return
-        agent.handle_owner(hid, reply)
+        agent.handle_owner(hid, "1" if pick and plan["proposals"] else "skip")
 
 
 def play(agent, db: DB, controls: MockControls, hid: str, script: list) -> None:
