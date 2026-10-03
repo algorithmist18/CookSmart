@@ -44,6 +44,8 @@ def meals_of(plan: dict) -> dict[str, list[str]]:
     m = plan.get("meals") or {}
     if not m:
         return split(plan["chosen"])
+    if plan.get("stage") and not plan["chosen"]:            # still choosing meal by meal: what's been picked so far
+        return {k: list(m.get(k, [])) for k in MEALS}
     out = {k: [r for r in m.get(k, []) if r in plan["chosen"]] for k in MEALS}
     out["lunch"] += [r for r in plan["chosen"] if not any(r in v for v in out.values())]
     return out

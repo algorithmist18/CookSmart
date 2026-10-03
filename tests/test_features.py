@@ -54,6 +54,7 @@ def test_every_scenario_plays_through_cleanly(env, sid, mode):
 # ------------------------------------------------------------------ meals, not single dishes
 def test_menus_are_composed_meals_without_duplicates(env):
     env.agent.nightly_review(env.hid)
+    env.agent.handle_owner(env.hid, "skip")                  # breakfast skipped: lunch options
     props = env.plan()["proposals"]
     assert any(len(p["recipe_ids"]) > 1 for p in props)
     sets = [frozenset(p["recipe_ids"]) for p in props]
@@ -66,9 +67,10 @@ def test_menus_are_composed_meals_without_duplicates(env):
 
 def test_choosing_option_selects_every_dish_in_it(env):
     env.agent.nightly_review(env.hid)
+    env.agent.handle_owner(env.hid, "skip")
     first = env.plan()["proposals"][0]["recipe_ids"]
-    env.agent.handle_owner(env.hid, "1")
-    assert env.plan()["chosen"] == first
+    env.agent.handle_owner(env.hid, "1")                     # lunch option 1 (the rest of the day takes option 1 too)
+    assert env.plan()["meals"]["lunch"] == first and set(first) <= set(env.plan()["chosen"])
 
 
 def test_multiple_dishes_in_one_request(env):
@@ -121,6 +123,7 @@ def test_vegetarian_household_is_never_offered_meat_or_egg(env):
 def test_non_veg_household_gets_chicken_that_is_about_to_spoil(env):
     load(env, "non_veg")
     env.agent.nightly_review(env.hid)
+    env.agent.handle_owner(env.hid, "skip")
     mains = {i for p in env.plan()["proposals"] for i in p["recipe_ids"]}
     assert "chicken_curry" in mains
 
@@ -327,33 +330,6 @@ def test_every_item_has_a_fridge_view():
     assert all(daystory.view(i)["emoji"] for i in ITEMS)
 
 
-def test_day_story_fridge_decreases_through_meals_and_grows_on_delivery():
-    c = TestClient(create_app(Settings(":memory:", "", "m", "", "t"), DB(":memory:")))
-    c.post("/api/households", json={"id": "h"})
-    c.post("/api/h/scenario/classic")
-    st = lambda: c.get("/api/h/owner/state").json()
-    c.post("/api/h/trigger/nightly_review")
-    c.post("/api/h/owner/message", json={"text": "1"})
-    c.post("/api/h/owner/message", json={"text": "approve"})
-    s = st()
-    stages = [x["stage"] for x in s["story"]]
-    assert stages[:2] == ["review", "plan"]
-    c.post("/api/h/trigger/morning")
-    s = st()
-    shown = {i["name"]: i["shown"] for i in s["fridge"]}
-    for m in ("breakfast", "lunch", "dinner"):
-        c.post(f"/api/h/trigger/serve_{m}")
-    s2 = st()
-    assert s2["served"] == ["breakfast", "lunch", "dinner"]
-    after = {i["name"]: i["shown"] for i in s2["fridge"]}
-    assert any(after.get(k, 0) < v for k, v in shown.items())          # shelves went down
-    assert {x["stage"] for x in s2["story"]} >= {"breakfast", "lunch", "dinner"}
-    assert any(d["qty"] < 0 for x in s2["story"] if x["stage"] == "lunch" for d in x["deltas"])
-    c.post("/api/h/trigger/serve_lunch")                                # serving twice changes nothing
-    assert st()["served"] == ["breakfast", "lunch", "dinner"]
-    c.post("/api/h/trigger/end_of_day")
-    c.post("/api/h/trigger/close_day")
-    assert st()["story"][-1]["stage"] == "wrapup"
 
 
 # ------------------------------------------------------------------ breakfast, lunch and dinner planned separately
@@ -364,22 +340,6 @@ def _day_env():
     return c
 
 
-def test_each_option_plans_three_separate_meals_from_stock():
-    from cooksmart.recipes import RECIPES
-    c = _day_env()
-    c.post("/api/h/trigger/nightly_review")
-    props = c.get("/api/h/owner/state").json()["plan"]["proposals"]
-    assert props and all(p["meals"]["lunch"] for p in props)
-    full = [p for p in props if p["meals"]["breakfast"] and p["meals"]["dinner"]]
-    assert full, "at least one option should have all three meals"
-    for p in full:
-        m = p["meals"]
-        assert all(RECIPES[r]["course"] == "breakfast" for r in m["breakfast"])
-        assert not (set(m["lunch"]) & set(m["dinner"])) and not (set(m["lunch"]) & set(m["breakfast"]))
-        assert p["recipe_ids"][0] == m["lunch"][0]
-        assert p["recipe_ids"] == list(dict.fromkeys(m["lunch"] + m["dinner"] + m["breakfast"]))
-    msgs = " ".join(m["text"] for m in c.get("/api/h/owner/messages").json())
-    assert "🌅" in msgs and "☀️" in msgs and "🌙" in msgs and "Saves the most food" in msgs
 
 
 def test_extra_meals_never_add_shortages_or_allergens():
@@ -419,20 +379,6 @@ def test_cook_is_told_which_dish_is_for_which_meal():
 
 
 # ------------------------------------------------------------------ ask breakfast + lunch, 15-minute delivery, eat-within window
-def test_owner_is_asked_for_breakfast_and_lunch_and_can_name_both():
-    from cooksmart.nlu import parse_owner
-    a = parse_owner("breakfast poha, lunch dal tadka and roti")
-    assert a == {"action": "meal_request", "breakfast": ["poha"], "lunch": ["dal_tadka", "roti"], "dinner": []}
-    assert parse_owner("dinner khichdi")["action"] in ("meal_request", "dish_request", "other")
-    assert parse_owner("lunch rajma chawal")["action"] == "meal_request"
-    c = _day_env()
-    c.post("/api/h/trigger/nightly_review")
-    assert "your own" in " ".join(m["text"] for m in c.get("/api/h/owner/messages").json())
-    c.post("/api/h/owner/message", json={"text": "breakfast poha, lunch dal tadka and roti"})
-    plan = c.get("/api/h/owner/state").json()["plan"]
-    assert plan["meals"]["breakfast"] == ["poha"] and plan["meals"]["lunch"] == ["dal_tadka", "roti"]
-    assert plan["meals"]["dinner"] and not set(plan["meals"]["dinner"]) & {"poha", "dal_tadka", "roti"}
-    assert plan["reviewed"] is True
 
 
 def test_named_breakfast_respects_allergies():
@@ -445,17 +391,6 @@ def test_named_breakfast_respects_allergies():
     assert "won't plan" in " ".join(m["text"] for m in c.get("/api/h/owner/messages").json())
 
 
-def test_groceries_arrive_in_15_minutes_and_the_next_step_is_the_door():
-    c = _day_env()
-    c.post("/api/h/trigger/nightly_review")
-    c.post("/api/h/owner/message", json={"text": "aloo gobi"})        # cauliflower is short: an order is needed
-    c.post("/api/h/owner/message", json={"text": "approve"})
-    st = c.get("/api/h/owner/state").json()
-    assert st["orders"] and all(o["eta_minutes"] == 15 for o in st["orders"])
-    assert st["next"]["action"]["kind"] == "door"
-    c.post("/api/h/door/arrive", json={"voice": "cook"})
-    st = c.get("/api/h/owner/state").json()
-    assert st["orders"][0]["status"] == "delivered" and "delivery" in [x["stage"] for x in st["story"]]
 
 
 def test_expiring_items_say_within_how_many_days():
@@ -467,17 +402,6 @@ def test_expiring_items_say_within_how_many_days():
     assert spinach["within"] == 2 and spinach["use_by"]
 
 
-def test_options_are_distinct_and_dinner_can_be_named():
-    c = _day_env()
-    c.post("/api/h/trigger/nightly_review")
-    props = c.get("/api/h/owner/state").json()["plan"]["proposals"]
-    labels = [p["label"] for p in props]
-    assert len(set(labels)) == len(labels) and all(labels)
-    dn = [tuple(p["meals"]["dinner"]) for p in props if p["meals"]["dinner"]]
-    assert len(set(dn)) == len(dn), "options should not repeat the same dinner"
-    c.post("/api/h/owner/message", json={"text": "breakfast upma, lunch dal tadka, dinner aloo gobi"})
-    m = c.get("/api/h/owner/state").json()["plan"]["meals"]
-    assert m["breakfast"] == ["upma"] and m["lunch"] == ["dal_tadka"] and m["dinner"] == ["aloo_gobi"]
 
 
 def test_avoid_prefers_a_different_breakfast_but_falls_back_when_there_is_no_other():
@@ -495,20 +419,6 @@ def test_avoid_prefers_a_different_breakfast_but_falls_back_when_there_is_no_oth
                     avoid={"poha"})["breakfast"] == ["poha"]            # no alternative: repeat rather than skip
 
 
-def test_options_always_show_three_meals_and_what_to_buy_even_with_stale_stock():
-    from cooksmart import repo as r
-    app = create_app(Settings(":memory:", "", "m", "", "t"), DB(":memory:"))
-    c = TestClient(app)
-    c.post("/api/households", json={"id": "h"})
-    c.post("/api/h/scenario/classic")
-    r.update_household(app.state.db, "h", sim_date="2026-10-12")          # a week later: most of it is stale
-    c.post("/api/h/trigger/nightly_review")
-    text = c.get("/api/h/owner/messages").json()[0]["text"]
-    assert "Probably gone off by tomorrow" in text and "Not sure if you still have" in text
-    assert text.count("Breakfast:") >= 3 and text.count("Lunch:") >= 3 and text.count("Dinner:") >= 3
-    assert text.count("🛒") >= 3
-    props = c.get("/api/h/owner/state").json()["plan"]["proposals"]
-    assert all(p["meals"]["breakfast"] and p["meals"]["dinner"] for p in props)       # a small shop fills the gaps
 
 
 def test_cook_brief_always_lists_breakfast_lunch_and_dinner():
@@ -526,3 +436,137 @@ def test_cook_brief_always_lists_breakfast_lunch_and_dinner():
     assert cook.count("\n") >= 3 and "ब्रेकफास्ट:" in cook and "लंच:" in cook and "डिनर:" in cook
     assert "🌅" in cook
     assert "🌅" not in spoken_text(cook) and "\n" not in spoken_text(cook)             # the voice reads words, not icons
+
+
+# ------------------------------------------------------------------ meal by meal: breakfast options, then lunch, then dinner
+def _say(c, *texts):
+    for t in texts:
+        c.post("/api/h/owner/message", json={"text": t})
+
+
+def _texts(c):
+    return [m["text"] for m in c.get("/api/h/owner/messages").json()]
+
+
+def _plan(c):
+    return c.get("/api/h/owner/state").json()["plan"]
+
+
+def test_options_come_one_meal_at_a_time_breakfast_then_lunch_then_dinner():
+    from cooksmart.recipes import RECIPES
+    c = _day_env()
+    c.post("/api/h/trigger/nightly_review")
+    first = _texts(c)[0]
+    assert "Breakfast options" in first and "Lunch options" not in first and "Dinner options" not in first
+    p = _plan(c)
+    assert p["stage"] == "breakfast" and p["proposals"]
+    assert all(RECIPES[r]["course"] == "breakfast" for o in p["proposals"] for r in o["recipe_ids"])
+    chosen_bf = p["proposals"][0]["recipe_ids"]
+    _say(c, "1")                                                        # pick breakfast
+    p = _plan(c)
+    assert p["stage"] == "lunch" and p["meals"]["breakfast"] == chosen_bf
+    assert "Lunch options" in _texts(c)[-1] and "✅" in _texts(c)[-1] and "Breakfast" in _texts(c)[-1]
+    assert not any(RECIPES[r]["course"] == "breakfast" for o in p["proposals"] for r in o["recipe_ids"])
+    lunch = p["proposals"][1]["recipe_ids"]
+    _say(c, "2")                                                        # pick lunch option 2
+    p = _plan(c)
+    assert p["stage"] == "dinner" and p["meals"]["lunch"] == lunch
+    assert "Dinner options" in _texts(c)[-1]
+    assert all(not set(o["recipe_ids"]) & (set(chosen_bf) | set(lunch)) for o in p["proposals"])
+    _say(c, "1")                                                        # pick dinner
+    p = _plan(c)
+    assert p["stage"] == "" and p["chosen"] and p["meals"]["dinner"]
+    assert set(p["chosen"]) == set(chosen_bf) | set(lunch) | set(p["meals"]["dinner"])
+    assert "Menu set" in " ".join(_texts(c)[-4:])
+
+
+def test_each_meal_can_be_skipped_or_named_and_options_are_labelled():
+    c = _day_env()
+    c.post("/api/h/trigger/nightly_review")
+    labels = [o["label"] for o in _plan(c)["proposals"]]
+    assert all(labels) and len(set(labels)) == len(labels)
+    _say(c, "skip")                                                     # no breakfast
+    assert _plan(c)["meals"]["breakfast"] == [] and _plan(c)["stage"] == "lunch"
+    _say(c, "dal tadka and roti")                                       # name lunch instead of tapping
+    p = _plan(c)
+    assert p["meals"]["lunch"] == ["dal_tadka", "roti"] and p["stage"] == "dinner"
+    _say(c, "aloo gobi")                                                # name dinner
+    p = _plan(c)
+    assert p["meals"]["dinner"] == ["aloo_gobi"] and p["stage"] == ""
+
+
+def test_naming_several_meals_at_once_jumps_ahead():
+    c = _day_env()
+    c.post("/api/h/trigger/nightly_review")
+    _say(c, "breakfast upma, lunch dal tadka")
+    p = _plan(c)
+    assert p["meals"]["breakfast"] == ["upma"] and p["meals"]["lunch"] == ["dal_tadka"] and p["stage"] == "dinner"
+    assert "Dinner options" in _texts(c)[-1]
+    _say(c, "dinner aloo gobi")
+    assert _plan(c)["meals"]["dinner"] == ["aloo_gobi"] and _plan(c)["stage"] == ""
+
+
+def test_named_meals_respect_allergies_at_every_stage():
+    c = _day_env()
+    _say(c, "Aarav is allergic to peanuts")
+    c.post("/api/h/trigger/nightly_review")
+    _say(c, "poha")                                                     # made with peanuts
+    assert "won't plan" in _texts(c)[-1] and _plan(c)["stage"] == "breakfast" and _plan(c)["meals"] == {}
+
+
+def test_silence_takes_option_one_for_every_remaining_meal_but_never_orders():
+    c = _day_env()
+    c.post("/api/h/trigger/nightly_review")
+    _say(c, "1")                                                        # breakfast chosen, then the owner goes quiet
+    c.post("/api/h/trigger/cutoff")
+    p = _plan(c)
+    assert p["stage"] == "" and p["reviewed"] is False and p["meals"]["lunch"] and p["meals"]["dinner"]
+    assert c.get("/api/h/owner/state").json()["orders"] == []
+
+
+def test_groceries_arrive_in_15_minutes_and_the_next_step_is_the_door():
+    c = _day_env()
+    c.post("/api/h/trigger/nightly_review")
+    _say(c, "aloo gobi", "skip", "skip")                                # lunch named: cauliflower is short, so an order is needed
+    _say(c, "approve")
+    st = c.get("/api/h/owner/state").json()
+    assert st["orders"] and all(o["eta_minutes"] == 15 for o in st["orders"])
+    assert st["next"]["action"]["kind"] == "door"
+    c.post("/api/h/door/arrive", json={"voice": "cook"})
+    st = c.get("/api/h/owner/state").json()
+    assert st["orders"][0]["status"] == "delivered" and "delivery" in [x["stage"] for x in st["story"]]
+
+
+def test_day_story_fridge_decreases_through_meals_and_grows_on_delivery():
+    c = _day_env()
+    st = lambda: c.get("/api/h/owner/state").json()
+    c.post("/api/h/trigger/nightly_review")
+    _say(c, "1", "1", "1", "approve")
+    assert [x["stage"] for x in st()["story"]][:2] == ["review", "plan"]
+    c.post("/api/h/trigger/morning")
+    shown = {i["name"]: i["shown"] for i in st()["fridge"]}
+    for m in ("breakfast", "lunch", "dinner"):
+        c.post(f"/api/h/trigger/serve_{m}")
+    s2 = st()
+    assert s2["served"] == ["breakfast", "lunch", "dinner"]
+    after = {i["name"]: i["shown"] for i in s2["fridge"]}
+    assert any(after.get(k, 0) < v for k, v in shown.items())
+    assert any(d["qty"] < 0 for x in s2["story"] if x["stage"] == "lunch" for d in x["deltas"])
+    c.post("/api/h/trigger/serve_lunch")
+    assert st()["served"] == ["breakfast", "lunch", "dinner"]
+    c.post("/api/h/trigger/end_of_day")
+    c.post("/api/h/trigger/close_day")
+    assert st()["story"][-1]["stage"] == "wrapup"
+
+
+def test_stale_stock_still_gets_options_with_a_small_shop_for_each_meal():
+    from cooksmart import repo as r
+    app = create_app(Settings(":memory:", "", "m", "", "t"), DB(":memory:"))
+    c = TestClient(app)
+    c.post("/api/households", json={"id": "h"})
+    c.post("/api/h/scenario/classic")
+    r.update_household(app.state.db, "h", sim_date="2026-10-12")
+    c.post("/api/h/trigger/nightly_review")
+    first = _texts(c)[0]
+    assert "Probably gone off by tomorrow" in first and "Not sure if you still have" in first
+    assert "Breakfast options" in first and first.count("🛒") >= 1

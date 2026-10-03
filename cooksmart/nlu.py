@@ -223,6 +223,8 @@ def parse_owner(text: str) -> dict:
                     text.strip(), re.S | re.I)
     if m:
         return {"action": "relay", "text": m.group(1).strip()}
+    if re.match(r"^(?:skip|chhod do|chod do)\b", low):
+        return {"action": "skip"}
     m = re.match(r"^mode\s+(auto|approve)\b", low)
     if m:
         return {"action": "mode", "mode": m.group(1)}

@@ -144,6 +144,7 @@ MIGRATIONS = [
     ("plans", "flags", "TEXT NOT NULL DEFAULT '{}'"),
     ("plans", "served", "TEXT NOT NULL DEFAULT '[]'"),
     ("plans", "meals", "TEXT NOT NULL DEFAULT '{}'"),
+    ("plans", "stage", "TEXT NOT NULL DEFAULT ''"),               # breakfast | lunch | dinner while the owner is choosing meal by meal
 ]
 
 

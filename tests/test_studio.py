@@ -76,6 +76,7 @@ def test_preview_shows_what_the_agent_will_actually_receive():
     sample = c.post("/api/h/studio/prompt/preview", json={}).json()
     assert sample["using"] == "sample data" and "SAFETY" in sample["rendered"]
     c.post("/api/h/trigger/nightly_review"); c.post("/api/h/owner/message", json={"text": "dal tadka"})
+    c.post("/api/h/owner/message", json={"text": "skip"}); c.post("/api/h/owner/message", json={"text": "skip"})        # breakfast, dinner
     live = c.post("/api/h/studio/prompt/preview", json={"call_type": "brief"}).json()
     assert live["using"] == "today's real plan" and "दाल तड़का" in live["rendered"] and live["variables"]["people"] == "4"
     unsaved = c.post("/api/h/studio/prompt/preview", json={"content": "Hello {{ cook_name }} / {{ dishes_hi }}"}).json()

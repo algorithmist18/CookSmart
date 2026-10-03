@@ -243,6 +243,24 @@ def _cond(db: DB, hid: str, cond: str | None) -> bool:
     return True
 
 
+def say_and_settle(agent, db: DB, hid: str, text: str) -> None:
+    """Scripted owner message. Menus are chosen meal by meal; a scripted pick or dish is shorthand for the whole menu,
+    so after it the remaining meals are skipped (a named dish) or take option 1 (a number)."""
+    from .nlu import parse_owner
+    key = lambda: (lambda p: (p["stage"], str(p["meals"])) if p else None)(repo.latest_plan(db, hid))   # noqa: E731
+    before = key()
+    agent.handle_owner(hid, text)
+    act = parse_owner(text)["action"]
+    reply = "skip" if act in ("dish_request", "meal_request") else "1" if act in ("choose", "yes") else None
+    if not reply or key() == before:
+        return
+    for _ in range(4):
+        plan = repo.latest_plan(db, hid)
+        if not plan or plan["state"] != "review" or not plan["stage"]:
+            return
+        agent.handle_owner(hid, reply)
+
+
 def play(agent, db: DB, controls: MockControls, hid: str, script: list) -> None:
     """Run a script instantly; the UI replays the resulting messages with typing delays."""
     for step in script:
@@ -254,7 +272,7 @@ def play(agent, db: DB, controls: MockControls, hid: str, script: list) -> None:
         if kind == "trigger":
             getattr(agent, {"morning": "morning_handoff"}.get(args[0], args[0]))(hid)
         elif kind == "owner":
-            agent.handle_owner(hid, args[0])
+            say_and_settle(agent, db, hid, args[0])
         elif kind == "cook":
             agent.handle_cook(hid, args[0], voice=True)
         elif kind == "door":

@@ -196,13 +196,13 @@ def _pick_breakfast(ctx: PlanContext, used: set[str], left: dict, max_gaps: int 
 COMMON = {"onion", "tomato", "atta", "rice", "potato"}
 
 
-def _pick_dinner(ctx: PlanContext, used: set[str], left: dict, lunch: list[str], max_gaps: int = 0) -> list[str]:
-    """A complete, lighter meal that differs from lunch: not the same kind of dish, not the same ingredients."""
+def _dinner_candidates(ctx: PlanContext, used: set[str], left: dict, lunch: list[str], max_gaps: int = 0) -> list[tuple]:
+    """Complete, lighter meals that differ from lunch (not the same kind of dish or ingredients), best first."""
     lunch_main = lunch[0]
     lunch_items = set(_needs(lunch, ctx)) - COMMON
     no_carb_needed = _no_heat(ctx) or bool(ctx.flags.get("fasting"))
     ctx2 = dataclasses.replace(ctx, stock=left, exclude_ids=set(ctx.exclude_ids) | used)
-    best = None
+    cands = []
     for rid, r in RECIPES.items():
         if r["course"] not in _mainable(ctx) - {"breakfast"} or rid in used or rid == lunch_main or not allowed(rid, ctx2):
             continue
@@ -215,9 +215,13 @@ def _pick_dinner(ctx: PlanContext, used: set[str], left: dict, lunch: list[str],
         overlap = len((set(_needs(ids, ctx)) - COMMON) & lunch_items)
         key = (_n_gaps(ids, ctx2, left), 0 if complete else 1, 1 if heavy else 0, overlap, -_urgency_of(ids, ctx2), 1 if r["course"] == RECIPES[lunch_main]["course"] else 0,
                1 if rep is not None and rep <= 3 else 0, 0 if "light" in r["tags"] else 1, -len(ids), rid)
-        if best is None or key < best[0]:
-            best = (key, ids)
-    return best[1] if best else []
+        cands.append((key, ids))
+    return sorted(cands, key=lambda c: c[0])
+
+
+def _pick_dinner(ctx: PlanContext, used: set[str], left: dict, lunch: list[str], max_gaps: int = 0) -> list[str]:
+    cands = _dinner_candidates(ctx, used, left, lunch, max_gaps)
+    return cands[0][1] if cands else []
 
 
 def plan_day(lunch: list[str], ctx: PlanContext, breakfast: list[str] | None = None, dinner: list[str] | None = None,
@@ -262,14 +266,47 @@ def label_options(picks: list[Proposal], ctx: PlanContext) -> list[Proposal]:
         return [dataclasses.replace(picks[0], label="Best fit")]
     scored = {
         "Saves the most food": [_urgency_of(p.recipe_ids, ctx) for p in picks],
-        "Quickest day": [-sum(RECIPES[r]["prep"] for r in p.recipe_ids) for p in picks],
-        "Lightest day": [sum(1 for r in p.recipe_ids if "light" in RECIPES[r]["tags"]) - sum(1 for r in p.recipe_ids if "heavy" in RECIPES[r]["tags"]) for p in picks]}
+        "Quickest": [-sum(RECIPES[r]["prep"] for r in p.recipe_ids) for p in picks],
+        "Lightest": [sum(1 for r in p.recipe_ids if "light" in RECIPES[r]["tags"]) - sum(1 for r in p.recipe_ids if "heavy" in RECIPES[r]["tags"]) for p in picks]}
     labels: dict[int, str] = {}
     for name, vals in scored.items():
         order = sorted((i for i in range(len(picks)) if i not in labels), key=lambda i: (-vals[i], i))
         if order and (vals[order[0]] > min(vals) or name == "Saves the most food"):
             labels[order[0]] = name
     return [dataclasses.replace(p, label=labels.get(i, "Something different")) for i, p in enumerate(picks)]
+
+
+def _left_after(ctx: PlanContext, taken: list[str]) -> PlanContext:
+    left = {k: dict(v) for k, v in ctx.stock.items()}
+    _take(left, taken, ctx)
+    return dataclasses.replace(ctx, stock=left)
+
+
+def breakfast_options(ctx: PlanContext, taken: list[str], n: int = 3) -> list[Proposal]:
+    ctx2, used, cands = _left_after(ctx, taken), set(taken), []
+    for rid, r in RECIPES.items():
+        if r["course"] != "breakfast" or rid in used or rid in ctx.exclude_ids or not allowed(rid, ctx2):
+            continue
+        n_gaps = _n_gaps([rid], ctx2, ctx2.stock)
+        if n_gaps > 2:
+            continue
+        rep = _repeat_days(rid, ctx)
+        cands.append(((n_gaps, -_urgency_of([rid], ctx2), 1 if rep is not None and rep <= 3 else 0, r["prep"], rid), rid))
+    picks = [enrich([rid], ctx2) for _, rid in sorted(cands)[:n]]
+    return label_options(picks, ctx2) if picks else []
+
+
+def dinner_options(ctx: PlanContext, taken: list[str], lunch: list[str], n: int = 3) -> list[Proposal]:
+    ctx2 = _left_after(ctx, taken)
+    picks, mains = [], set()
+    for _, ids in _dinner_candidates(ctx, set(taken), ctx2.stock, lunch or taken[:1] or ["roti"], max_gaps=2):
+        if ids[0] in mains:
+            continue
+        mains.add(ids[0])
+        picks.append(enrich(ids, ctx2))
+        if len(picks) == n:
+            break
+    return label_options(picks, ctx2) if picks else []
 
 
 def day_name(meals: dict) -> str:
@@ -333,7 +370,7 @@ def _build_menu(main: str, ctx: PlanContext) -> list[str] | None:
     return ids
 
 
-def heuristic_propose(ctx: PlanContext, n: int = 3) -> Proposals:
+def heuristic_propose(ctx: PlanContext, n: int = 3, day: bool = True) -> Proposals:
     """Greedy selection by *marginal* spoilage coverage, so the options together use up as much of what is
     about to spoil as possible (not three menus that all use the same tomatoes)."""
     likes = {norm(i) for i in ctx.preferences.get("likes", [])}
@@ -379,6 +416,9 @@ def heuristic_propose(ctx: PlanContext, n: int = 3) -> Proposals:
         covered |= {i for i, w in best[2].items() if w > 0}
     picks, seen = [], set()
     for ids in picked:                                  # breakfast and dinner differ between options where the stock allows
+        if not day:                                     # one meal at a time: lunch options only
+            picks.append(enrich(ids, ctx))
+            continue
         p = with_day(enrich(ids, ctx), ctx, avoid=seen)
         seen |= set(p.meals["breakfast"]) | set(p.meals["dinner"])
         picks.append(p)
@@ -442,7 +482,7 @@ class ClaudePlanner:
         self.client = anthropic.Anthropic(api_key=api_key)
         self.model = model
 
-    def propose(self, ctx: PlanContext, n: int = 3) -> Proposals:
+    def propose(self, ctx: PlanContext, n: int = 3, day: bool = True) -> Proposals:
         stock = "\n".join(f"- {k}: {fmt_qty(v['qty'], v['unit'])}, days left: {v['days_left']}"
                           for k, v in sorted(ctx.stock.items(), key=lambda kv: (kv[1]['days_left'] is None,
                                                                               kv[1]['days_left'] or 0)))
@@ -468,7 +508,8 @@ class ClaudePlanner:
             for m in block.input.get("menus", []):
                 ids = [i for i in dict.fromkeys(m.get("dish_ids", [])) if i in RECIPES and allowed(i, ctx)]
                 if ids and ids[0] not in ctx.exclude_ids and all(p.recipe_ids[0] != ids[0] for p in picks):
-                    picks.append(with_day(enrich(ids[:3], ctx, m.get("reason")), ctx, m.get("breakfast_ids"), m.get("dinner_ids")))
+                    p = enrich(ids[:3], ctx, m.get("reason"))
+                    picks.append(with_day(p, ctx, m.get("breakfast_ids"), m.get("dinner_ids")) if day else p)
         if not picks:
             raise ValueError("Claude returned no valid menus")
         picks = label_options(picks[:n], ctx)
@@ -482,13 +523,21 @@ class Planner:
         self.claude = claude
         self.last_source = "heuristic"
 
-    def propose(self, ctx: PlanContext, n: int = 3) -> Proposals:
+    def propose(self, ctx: PlanContext, n: int = 3, day: bool = True) -> Proposals:
         if self.claude:
             try:
-                out = self.claude.propose(ctx, n)
+                out = self.claude.propose(ctx, n, day)
                 self.last_source = "claude"
                 return out
             except Exception:
                 pass
         self.last_source = "heuristic"
-        return heuristic_propose(ctx, n)
+        return heuristic_propose(ctx, n, day)
+
+    def meal_options(self, meal: str, ctx: PlanContext, taken: list[str], lunch: list[str] | None = None, n: int = 3) -> list[Proposal]:
+        """Options for ONE meal, planned from the stock left after the meals already chosen."""
+        if meal == "breakfast":
+            return breakfast_options(ctx, taken, n)
+        if meal == "dinner":
+            return dinner_options(ctx, taken, lunch or [], n)
+        return self.propose(_left_after(ctx, taken), n, day=False).items

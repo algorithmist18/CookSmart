@@ -114,7 +114,7 @@ def next_step(plan: dict | None, orders: list[dict]) -> dict:
     st = plan["state"]
     if st == "review":
         return dict(step=3, label="⏰ Owner stays silent (cutoff)", action=trig("cutoff"),
-                    hint="Reply in the owner chat to choose a menu, or press this to see what happens when you don't.")
+                    hint="Choose breakfast, then lunch, then dinner in the chat, or press this to see what happens when you don't.")
     if st == "approval":
         return dict(step=5, label="⏰ No approval in time (cutoff)", action=trig("cutoff"),
                     hint="Reply *approve* in the owner chat, or press this to see the agent hold the order.")

@@ -13,6 +13,7 @@ def stock(e, name):
 # ---------------------------------------------------------------- planning (S1/S2)
 def test_menu_covers_expiring_items(env):
     env.agent.nightly_review(env.hid)
+    env.agent.handle_owner(env.hid, "skip")           # breakfast skipped: now the lunch options
     plan = env.plan()
     from cooksmart.recipes import RECIPES
     used = {i for p in plan["proposals"] for rid in p["recipe_ids"] for i in RECIPES[rid]["needs"]}
@@ -106,7 +107,7 @@ def test_silence_never_orders_even_in_auto_mode(env):
     env.agent.nightly_review(env.hid)
     from cooksmart.planner import PlanContext, enrich
     ctx = PlanContext(cook_day=env.plan()["day"], stock=inv.available(env.db, env.hid, DAY, env.plan()["day"]))
-    repo.update_plan(env.db, env.hid, env.plan()["id"], proposals=[enrich(["palak_paneer"], ctx).as_dict()])
+    repo.update_plan(env.db, env.hid, env.plan()["id"], stage="", proposals=[enrich(["palak_paneer"], ctx).as_dict()])      # a whole-day option
     env.agent.cutoff(env.hid)
     plan = env.plan()
     assert plan["chosen"] == ["palak_paneer"] and plan["reviewed"] is False

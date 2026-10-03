@@ -5,7 +5,7 @@ import pytest
 
 os.environ.pop("ANTHROPIC_API_KEY", None)   # tests always run on the offline path
 
-from cooksmart import inventory as inv, repo                      # noqa: E402
+from cooksmart import inventory as inv, repo, scenarios                      # noqa: E402
 from cooksmart.api import build_agent                               # noqa: E402
 from cooksmart.config import Settings                               # noqa: E402
 from cooksmart.db import DB                                         # noqa: E402
@@ -28,6 +28,9 @@ def env():
         pass
     e = E()
     e.db, e.controls, e.agent, e.hid = db, controls, agent, "demo"
+    raw = agent.handle_owner                    # tests use the scenario shorthand: a pick or a named dish settles the whole menu
+    e.agent.handle_owner = lambda hid, text: scenarios.say_and_settle(type("A", (), {"handle_owner": staticmethod(raw)}), db, hid, text)
+    e.raw_owner = raw
     e.owner = lambda: [m["text"] for m in repo.list_messages(db, "demo", "owner")]
     e.cook = lambda: [m["text"] for m in repo.list_messages(db, "demo", "cook")]
     e.plan = lambda: repo.latest_plan(db, "demo")

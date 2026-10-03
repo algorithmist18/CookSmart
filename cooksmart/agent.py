@@ -32,7 +32,8 @@ PROBLEMS = ("used_up", "remaining", "low", "spoiled", "cannot_cook")
 
 HELP = (
     "👋 *I'm CookSmart.* Here's what you can tell me:\n"
-    "• *1*, *1 and 2*, *breakfast poha, lunch dal rice, dinner khichdi*: choose tomorrow's menu\n"
+    "• *1*, *2*, *3*, a dish name, or *skip*: choose breakfast, then lunch, then dinner\n"
+    "• *breakfast poha, lunch dal rice*: name several meals at once\n"
     "• *something else*: I'll propose different meals\n"
     "• *cream 100 ml*, *no tomatoes*, *all good*: fix what's in the kitchen\n"
     "• *6 guests tomorrow*, *fasting tomorrow*, *cook is off tomorrow*\n"
@@ -138,6 +139,19 @@ class Agent:
             return _names(plan["chosen"]) if not bold else f"*{_names(plan['chosen'])}*"
         return "\n".join(f"{i} {k}: " + (f"*{v}*" if bold else v) for i, k, v in parts)
 
+    def _fmt_stage_props(self, props: list[dict], stage: str, avail: dict, scale: float) -> str:
+        lines = []
+        for n, p in enumerate(props, 1):
+            have = [i for i in inv.needs_for(p["recipe_ids"], scale) if i in avail and i not in {g["name"] for g in p["gaps"]}]
+            parts = [f"*{n} · {p.get('label') or 'Option'}*", f"{daystory.ICON[stage]} {_names(p['recipe_ids'])}"]
+            if p["reason"] and not p["reason"].startswith("Uses stock on hand"):
+                parts.append(f"✨ {p['reason']}")
+            if have:
+                parts.append("📦 From your kitchen: " + ", ".join(have))
+            parts.append("🛒 Buy: " + ", ".join(g["name"] for g in p["gaps"]) if p["gaps"] else "🛒 Nothing to buy")
+            lines.append("\n".join(parts))
+        return "\n\n".join(lines)
+
     def _fmt_props(self, props: list[dict], avail: dict | None = None, scale: float = 1.0) -> str:
         """Each option shows all three meals (or says nothing is planned), what it uses from the kitchen, and what to buy."""
         avail, lines = avail or {}, []
@@ -164,6 +178,13 @@ class Agent:
             self._say(hid, head + "🤷 No menu: nothing confirmed in stock. Update it (*tomato 4*) or say *all good*.")
             return
         h = self._h(hid)
+        if plan["stage"]:
+            stage = plan["stage"]
+            text = (head + f"{daystory.ICON[stage]} *{stage.title()} options. Pick one:*\n\n" +
+                    self._fmt_stage_props(props, stage, inv.available(self.db, hid, h["sim_date"], plan["day"]), self._scale(plan)))
+            text += (f"\n\n👉 Tap an option, or reply *1*, *2*, *3*. Or name your own dish. *skip* = no {stage}.")
+            buttons = [f"Accept {n}" for n in range(1, len(props) + 1)] + [f"Skip {stage}", "Something else"]
+            return self._say(hid, text, buttons)
         text = head + "🍽️ *Tomorrow's plan. Pick one:*\n\n" + self._fmt_props(
             props, inv.available(self.db, hid, h["sim_date"], plan["day"]), self._scale(plan))
         if any(not (p.get("meals") or {}).get(k) for p in props for k in ("breakfast", "dinner")):
@@ -210,19 +231,36 @@ class Agent:
                            ", ".join(f"{i['name']} {fmt_qty(i['qty'], i['unit'])}" for i in doubtful) +
                            ".\nI left these out of the plan. Reply *all good* if they're still there, or tell me what changed.")
 
-        props = self.planner.propose(self._ctx(hid, day, flags=flags))
-        plan = repo.update_plan(self.db, hid, plan["id"], proposals=[p.as_dict() for p in props.items],
-                                notes=props.tradeoffs, state="review")
-        repo.audit(self.db, hid, "nightly_review", plan=plan["id"], source=props.source, flags=flags,
-                   proposals=[p.recipe_ids for p in props.items], doubtful=[i["name"] for i in doubtful])
+        repo.audit(self.db, hid, "nightly_review", plan=plan["id"], flags=flags, doubtful=[i["name"] for i in doubtful])
         low = [i for i in inv.list_items(self.db, hid) if (inv.days_left(i, day) is not None and inv.days_left(i, day) <= 1)]
         repo.add_story(self.db, hid, plan["id"], "review", "Checked the fridge" + (
             ": " + ", ".join(i["name"] for i in low[:4]) + " going off soon." if low else ": all fresh."))
-        self._send_proposals(hid, plan, "\n".join(preface))
+        self._begin_stage(hid, plan["id"], "breakfast", "\n".join(preface))        # meal by meal: breakfast first
+        plan = repo.get_plan(self.db, hid, plan["id"])
         return plan
+
+    def _stage_taken(self, plan: dict, stage: str) -> list[str]:
+        return [d for m in daystory.MEALS if m != stage for d in plan["meals"].get(m, [])]
+
+    def _begin_stage(self, hid: str, plan_id: int, stage: str, preface: str = "") -> None:
+        """Offer options for one meal, planned from what the earlier meals left."""
+        plan = repo.get_plan(self.db, hid, plan_id)
+        ctx = self._plan_ctx(hid, plan, feedback=plan["feedback"], exclude=plan["excluded"])
+        opts = self.planner.meal_options(stage, ctx, self._stage_taken(plan, stage), lunch=plan["meals"].get("lunch", []))
+        plan = repo.update_plan(self.db, hid, plan_id, proposals=[p.as_dict() for p in opts], stage=stage,
+                                notes=[], state="review")
+        repo.audit(self.db, hid, "stage_options", plan=plan_id, stage=stage, options=[p.recipe_ids for p in opts])
+        if not opts and (plan["excluded"] or plan["feedback"]):        # the owner turned everything down
+            return self._say(hid, (preface + "\n" if preface else "") +
+                             f"🙏 That's all I have for {stage} from what's at home. Name a dish, or reply *skip*.")
+        if not opts:                                                   # nothing suitable: say so and move on
+            return self._pick_for_stage(hid, plan, [], preface=preface, auto=True)
+        self._send_proposals(hid, plan, preface)
 
     def _replan(self, hid: str, plan_id: int, preface: str = "") -> None:
         plan = repo.get_plan(self.db, hid, plan_id)
+        if plan["stage"]:
+            return self._begin_stage(hid, plan_id, plan["stage"], preface)
         props = self.planner.propose(self._plan_ctx(hid, plan, feedback=plan["feedback"], exclude=plan["excluded"]))
         plan = repo.update_plan(self.db, hid, plan_id, proposals=[p.as_dict() for p in props.items],
                                 notes=props.tradeoffs)
@@ -267,14 +305,18 @@ class Agent:
         state = plan["state"]
         if act == "meal_request" and state in ("review", "approval", "held", "ready"):
             return self._choose_meals(hid, plan, a["breakfast"], a["lunch"], a.get("dinner", []))
+        if act == "skip" and state == "review" and plan["stage"]:
+            return self._pick_for_stage(hid, plan, [])
         if act == "dish_request" and state in ("review", "approval", "held", "ready"):
+            if state == "review" and plan["stage"]:
+                return self._stage_dishes(hid, plan, a["dishes"])
             return self._choose(hid, plan, a["dishes"], reviewed=True)
         if act == "choose" and state == "review":
             ids = _flat(plan["proposals"], a["choices"])
             if ids:
-                return self._choose(hid, plan, ids, reviewed=True)
+                return self._pick(hid, plan, ids)
         if act == "yes" and state == "review" and plan["proposals"]:
-            return self._choose(hid, plan, plan["proposals"][0]["recipe_ids"], reviewed=True)
+            return self._pick(hid, plan, plan["proposals"][0]["recipe_ids"])
         if act == "yes" and state in ("approval", "held"):
             return self._approve(hid, plan)
         if act == "no" and state in ("approval", "held"):
@@ -404,23 +446,72 @@ class Agent:
     # ------------------------------------------------------------------ S3
     def _set_menu(self, hid: str, plan: dict, ids: list[str], meals: dict | None = None, **fields) -> dict:
         """Set today's dishes together with which meal each belongs to. Meals already served keep their dishes."""
+        fields.setdefault("stage", "")
         meals = {m: list(meals.get(m, [])) for m in daystory.MEALS} if meals else _meals_for(plan["proposals"], ids)
         for m in plan["served"]:
             meals[m] = daystory.meals_of(plan)[m]
         union = [d for m in ("lunch", "dinner", "breakfast") for d in meals[m]]
         return repo.update_plan(self.db, hid, plan["id"], chosen=list(dict.fromkeys(union)), meals=meals, **fields)
 
+    def _pick(self, hid: str, plan: dict, ids: list[str]) -> None:
+        if plan["stage"]:
+            return self._pick_for_stage(hid, plan, ids)
+        self._choose(hid, plan, ids, reviewed=True)
+
+    def _stage_dishes(self, hid: str, plan: dict, dishes: list[str]) -> None:
+        """The owner named dishes instead of tapping an option: breakfast dishes are breakfast, the rest fill the meal
+        being asked about (breakfast asks fall through to lunch)."""
+        bf = [d for d in dishes if RECIPES[d]["course"] == "breakfast"]
+        rest = [d for d in dishes if d not in bf]
+        into_dinner = plan["stage"] == "dinner"
+        self._choose_meals(hid, plan, bf, [] if into_dinner else rest, rest if into_dinner else [])
+
+    def _pick_for_stage(self, hid: str, plan: dict, ids: list[str], preface: str = "", auto: bool = False) -> None:
+        """The owner picked (or skipped) the current meal; move on to the next one, or finish the menu."""
+        stage = plan["stage"]
+        conflicts = prof.allergen_conflicts(ids, self._h(hid)["preferences"]) if ids else []
+        if conflicts:
+            c = conflicts[0]
+            repo.audit(self.db, hid, "allergy_block", conflicts=conflicts)
+            return self._say(hid, f"🚫 I won't plan *{RECIPES[c['recipe']]['name']}*: it has {c['item']} and "
+                                  f"{', '.join(c['who'])} is allergic ({c['group']}). Pick another option.")
+        meals = {**plan["meals"], stage: list(ids)}
+        plan = repo.update_plan(self.db, hid, plan["id"], meals=meals, rejections=0, feedback=[], excluded=[])
+        label = _names(ids) if ids else ("nothing planned" if auto else "skipped")
+        done = f"✅ {daystory.ICON[stage]} {stage.title()}: {label}"
+        preface = (preface + "\n" if preface else "") + done
+        nxt = next((m for m in daystory.MEALS if m not in meals), None)
+        if nxt:
+            return self._begin_stage(hid, plan["id"], nxt, preface)
+        union = [d for m in ("lunch", "dinner", "breakfast") for d in meals[m]]
+        if not union:
+            repo.update_plan(self.db, hid, plan["id"], stage="", meals={})
+            return self._say(hid, preface + "\nNothing is planned for tomorrow. Say *change menu* to start again.")
+        self._say(hid, preface)
+        self._choose(hid, plan, list(dict.fromkeys(union)), reviewed=True, meals=meals)
+
     def _choose_meals(self, hid: str, plan: dict, breakfast: list[str], lunch: list[str], dinner: list[str]) -> None:
         """The owner named some meals. What they leave out comes from option 1."""
-        top = (plan["proposals"] or [{}])[0].get("meals") or {}
-        lunch = lunch or top.get("lunch") or []
-        if not lunch:
-            return self._say(hid, "Which lunch? Name a dish, e.g. *lunch dal rice*.")
-        breakfast = breakfast or top.get("breakfast") or []
-        dinner = plan_day(lunch, self._plan_ctx(hid, plan), breakfast, dinner or top.get("dinner"), force_breakfast=True,
-                          force_dinner=bool(dinner))["dinner"]
-        meals = {"breakfast": breakfast, "lunch": lunch, "dinner": dinner}
-        self._choose(hid, plan, [d for m in ("lunch", "dinner", "breakfast") for d in meals[m]], reviewed=True, meals=meals)
+        named = {m: v for m, v in (("breakfast", breakfast), ("lunch", lunch), ("dinner", dinner)) if v}
+        conflicts = prof.allergen_conflicts([d for v in named.values() for d in v], self._h(hid)["preferences"])
+        if conflicts:                                     # a hard stop, whichever meal it was named for
+            c = conflicts[0]
+            repo.audit(self.db, hid, "allergy_block", conflicts=conflicts)
+            return self._say(hid, f"🚫 I won't plan *{RECIPES[c['recipe']]['name']}*: it has {c['item']} and "
+                                  f"{', '.join(c['who'])} is allergic ({c['group']}). Pick another option, or update the "
+                                  "allergy first if it's wrong.")
+        if plan["state"] != "review" or not plan["stage"]:             # already past choosing: the named meals replace the menu
+            meals = {m: named.get(m, []) for m in daystory.MEALS}
+            return self._choose(hid, plan, [d for m in ("lunch", "dinner", "breakfast") for d in meals[m]], reviewed=True, meals=meals)
+        meals = {**plan["meals"], **named}
+        plan = repo.update_plan(self.db, hid, plan["id"], meals=meals)
+        nxt = next((m for m in daystory.MEALS if m not in meals), None)
+        said = "\n".join(f"✅ {daystory.ICON[m]} {m.title()}: {_names(v)}" for m, v in named.items())
+        if nxt:
+            return self._begin_stage(hid, plan["id"], nxt, said)
+        self._say(hid, said)
+        self._choose(hid, plan, list(dict.fromkeys(d for m in ("lunch", "dinner", "breakfast") for d in meals[m])),
+                     reviewed=True, meals=meals)
 
     def _choose(self, hid: str, plan: dict, ids: list[str], reviewed: bool, meals: dict | None = None) -> None:
         conflicts = prof.allergen_conflicts(ids, self._h(hid)["preferences"])
@@ -431,7 +522,7 @@ class Agent:
                            "allergy first if it's wrong.")
             repo.audit(self.db, hid, "allergy_block", conflicts=conflicts)
             return
-        plan = self._set_menu(hid, plan, ids, meals, reviewed=reviewed, offer=None)
+        plan = self._set_menu(hid, plan, ids, meals, reviewed=reviewed, offer=None, stage="")
         repo.audit(self.db, hid, "menu_chosen", plan=plan["id"], dishes=plan["chosen"], reviewed=reviewed)
         repo.add_story(self.db, hid, plan["id"], "plan", self._day_text(plan))
         self._say(hid, f"👍 Menu set:\n{self._day_text(plan, bold=True)}")
@@ -458,9 +549,27 @@ class Agent:
             if not plan["proposals"]:
                 return self._say(hid, "⏰ No reply by the cutoff and I have no confirmed stock to plan from. "
                                       "Please update the kitchen so the cook has a menu.")
-            top = plan["proposals"][0]["recipe_ids"]
-            plan = self._set_menu(hid, plan, top, reviewed=False,
-                                  notes=[*plan["notes"], "Owner did not review this menu."])
+            if plan["stage"]:                                       # take option 1 for every meal still to choose
+                meals = dict(plan["meals"])
+                while plan["stage"]:
+                    top1 = plan["proposals"][0]["recipe_ids"] if plan["proposals"] else []
+                    meals[plan["stage"]] = top1
+                    nxt = next((m for m in daystory.MEALS if m not in meals), None)
+                    if not nxt:
+                        break
+                    plan = repo.update_plan(self.db, hid, plan["id"], meals=meals)
+                    ctx = self._plan_ctx(hid, plan)
+                    opts = self.planner.meal_options(nxt, ctx, self._stage_taken({**plan, "meals": meals}, nxt), lunch=meals.get("lunch", []))
+                    plan = repo.update_plan(self.db, hid, plan["id"], proposals=[o.as_dict() for o in opts], stage=nxt)
+                top = [d for m in ("lunch", "dinner", "breakfast") for d in meals.get(m, [])]
+                if not top:
+                    return self._say(hid, "⏰ No reply, and nothing I can plan from confirmed stock. Please update the kitchen.")
+                plan = self._set_menu(hid, plan, list(dict.fromkeys(top)), meals, reviewed=False,
+                                      notes=[*plan["notes"], "Owner did not review this menu."])
+            else:
+                top = plan["proposals"][0]["recipe_ids"]
+                plan = self._set_menu(hid, plan, top, reviewed=False,
+                                      notes=[*plan["notes"], "Owner did not review this menu."])
             repo.audit(self.db, hid, "cutoff_silent_pick", plan=plan["id"], dishes=top)
             self._say(hid, f"⏰ No reply. Going with *{_names(top)}* (unreviewed). No auto-order.")
             self._feasibility(hid, plan, hold=True)
